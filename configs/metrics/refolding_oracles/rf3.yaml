@@ -1,8 +1,9 @@
 # RF3 (RoseTTAFold3, Foundry) refolding oracle configurations. Runs `rf3 fold` in its own environment:
 # set RF3_BIN (and optionally RF3_CKPT_PATH) or pass rf3_executable / ckpt_path.
-# RF3Oracle forwards neither templates nor MSAs, so the *_ppi and *_dna variants refold WITHOUT the
-# template conditioning their AF3 counterparts use; their pass rates are not comparable to AF3's.
-# Tags (via metrics_tags) control which oracle actually runs for each example.
+# MSAs: msa_mode none (default, single sequence) | target (all protein chains but the chain of interest) | all,
+# searched with a local MMseqs2 (MMSEQS_BIN, MMSEQS_DB; see rfproteina/utils/mmseqs_msa.py).
+# RF3Oracle forwards no templates, so the *_ppi and *_dna variants refold WITHOUT the template conditioning
+# their AF3 counterparts use; their pass rates are not comparable to AF3's.
 
 oracle:
   _target_: rfproteina.metrics.oracles.rf3_oracle.RF3Oracle

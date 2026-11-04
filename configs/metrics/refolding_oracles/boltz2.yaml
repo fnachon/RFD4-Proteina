@@ -1,0 +1,74 @@
+# Boltz-2 refolding oracle configurations. Runs `boltz predict` in its own environment:
+# set BOLTZ_BIN (and optionally BOLTZ_CACHE) or pass boltz_executable / cache_dir.
+# MSAs: msa_mode none (default, single sequence) | target (all protein chains but the chain of interest) | all,
+# searched with a local MMseqs2 (MMSEQS_BIN, MMSEQS_DB; see rfproteina/utils/mmseqs_msa.py).
+# Boltz2Oracle forwards no templates, so the *_ppi and *_dna variants refold WITHOUT the template conditioning
+# their AF3 counterparts use; their pass rates are not comparable to AF3's.
+
+oracle:
+  _target_: rfproteina.metrics.oracles.boltz2_oracle.Boltz2Oracle
+  oracle_name: boltz2
+  aggregation: [median]
+  frac_under_thresholds:
+    min_ipae_coi: [1, 1.5, 2]
+  required_tags_any:
+    - boltz2_refolding
+    - unconditional_refolding
+    - motif_scaffold_refolding
+    - internal_coordinate_motif_scaffold_refolding
+    - sm_binder_refolding
+    - ame_refolding
+    - ame_no_ligand_refolding
+    - ame_original_benchmark_refolding
+    - disco_refolding
+
+oracle_ppi:
+  _target_: rfproteina.metrics.oracles.boltz2_oracle.Boltz2Oracle
+  oracle_name: boltz2_ppi
+  aggregation: [median]
+  frac_under_thresholds:
+    min_ipae_coi: [1, 1.5, 2]
+  required_tags_any:
+    - ppi_refolding
+    - antibody
+
+oracle_dna:
+  _target_: rfproteina.metrics.oracles.boltz2_oracle.Boltz2Oracle
+  oracle_name: boltz2_dna
+  aggregation: [median]
+  frac_under_thresholds:
+    min_ipae_coi: [1, 1.5, 2]
+  required_tags_any:
+    - dna_refolding
+
+# --- Pre-oracle transforms -------------------------------------------------
+# A `pre_oracle_transform` rewrites each design just before it is folded, and may
+# fan one design out into several named outputs. Every output is refolded and
+# saved under its own filename in the design's output directory, and its metrics
+# carry its `save_id` after the usual oracle prefix -- which is this file's config
+# key, not `oracle_name` (e.g. `oracle_apo.apo.overall_plddt`,
+# `oracle_off_target.her2.min_ipae_coi`) -- so refolds that differ only by the
+# transform stay directly comparable.
+
+# Folds the designed chain on its own to ask whether a binder holds its fold apo.
+# Emits `oracle_apo.apo.*` keys.
+#
+# Pair `apo_refolding` with a tag that runs one of the untransformed oracles above (e.g.
+# `ppi_refolding`) to supply the holo half. `refolded_apo_holo_rmsd` reads that refold as
+# `refold.untransformed` and gates on the matching `exists_refold:untransformed` tag, so an unpaired
+# apo oracle just drops that one column -- the apo confidences below are still reported.
+#
+# Note no `refolded_*.apo.*` key is emitted for the design-vs-refold metrics: this refold is missing
+# the chains the transform dropped, so comparing it against the design compares two different
+# structures, and each of those metrics requires `is_refold:untransformed` for that reason. Use
+# `refolded_apo_holo_rmsd`, which compares the apo refold against the untransformed one instead.
+oracle_apo:
+  _target_: rfproteina.metrics.oracles.boltz2_oracle.Boltz2Oracle
+  oracle_name: boltz2_apo
+  aggregation: [median]
+  pre_oracle_transform:
+    _target_: rfproteina.metrics.oracles.pre_oracle_transform.ApoOnlyTransform
+  required_tags_any:
+    - apo_refolding
+
+# The off-target substitution assay is not provided for RF3: it relies on templates (see header).

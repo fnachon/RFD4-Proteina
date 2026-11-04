@@ -6,8 +6,10 @@ subprocess per batch. This works on Apple Silicon (MPS), CUDA and CPU: RF3 selec
 Point the oracle at the Foundry install with ``rf3_executable`` or the ``RF3_BIN`` environment variable
 (default: ``rf3`` on ``PATH``), and optionally at a checkpoint with ``ckpt_path`` / ``RF3_CKPT_PATH``.
 
-Limitations: structural templates and MSAs are not forwarded (``rf3 fold`` takes them from a JSON spec, not from
-CIF inputs), so ``template_query`` must be unset and designs are folded single-sequence.
+MSAs: ``msa_mode="none"`` (default) folds single-sequence. ``"target"`` searches every protein chain except the chain of
+interest and ``"all"`` every protein chain, with a local MMseqs2 (:mod:`rfproteina.utils.mmseqs_msa`); the paths reach
+RF3 through the ``_msa_paths_by_chain_id`` CIF header it reads. Structural templates are not forwarded, so
+``template_query`` must be unset.
 """
 
 import json
@@ -24,9 +26,11 @@ from atomworks.io.parser import parse
 from atomworks.io.utils.atom_array_plus import as_atom_array_plus
 from atomworks.io.utils.io_utils import to_cif_file
 
+from rfproteina.metrics.oracles.oracle_inputs import ChainEntity, MSAMode, chain_entities, resolve_chain_msas
 from rfproteina.metrics.oracles.oracle_metric import OracleJobInput, OracleMetric, extract_confidence_metrics
 from rfproteina.utils.chain import get_chain_of_interest
 from rfproteina.utils.ddp import RankedLogger
+from rfproteina.utils.mmseqs_msa import MMseqsMSABuilder
 
 logger = RankedLogger(__name__, rank_zero_only=True)
 
@@ -42,6 +46,8 @@ class RF3Oracle(OracleMetric):
         diffusion_batch_size: Samples per design; the best by ``ranking_score`` is kept.
         num_steps: Diffusion steps (RF3 default 200 when ``None``).
         seed: Model seed (RF3 default when ``None``).
+        msa_mode: ``none`` | ``target`` | ``all``; see module docstring.
+        msa_builder: MMseqs2 MSA builder; created from the environment when an MSA mode needs one and none is given.
         extra_rf3_args: Extra Hydra ``key=value`` overrides appended to the command.
         timeout_s: Per-batch subprocess timeout.
     """
@@ -55,6 +61,8 @@ class RF3Oracle(OracleMetric):
         diffusion_batch_size: int | None = None,
         num_steps: int | None = None,
         seed: int | None = None,
+        msa_mode: MSAMode = "none",
+        msa_builder: MMseqsMSABuilder | None = None,
         extra_rf3_args: list[str] | None = None,
         timeout_s: float | None = None,
         template_query: str | None = None,
@@ -65,7 +73,11 @@ class RF3Oracle(OracleMetric):
                 "RF3Oracle does not forward structural templates; set template_query=null "
                 "(use the AF3 oracle for template-conditioned refolding)."
             )
+        if msa_mode not in ("none", "target", "all"):
+            raise ValueError(f"msa_mode must be none, target or all, got {msa_mode!r}")
         super().__init__(oracle_name=oracle_name, template_query=None, **kwargs)
+        self.msa_mode = msa_mode
+        self.msa_builder = msa_builder
         self.rf3_executable = rf3_executable or os.environ.get("RF3_BIN") or "rf3"
         self.ckpt_path = ckpt_path or os.environ.get("RF3_CKPT_PATH")
         self.n_recycles = n_recycles
@@ -95,18 +107,26 @@ class RF3Oracle(OracleMetric):
         if len(set(names)) != len(names):
             raise ValueError(f"RF3Oracle: duplicate job names in one batch: {sorted(n for n in names if names.count(n) > 1)}")
 
+        if self.msa_mode != "none" and self.msa_builder is None:
+            self.msa_builder = MMseqsMSABuilder()
+        entities = [chain_entities(j.atom_array) for j in pending]
+        msas = resolve_chain_msas(pending, entities, self.msa_builder, self.msa_mode)
+
         batch_dir = Path(tempfile.mkdtemp(prefix="rf3_batch_"))
         in_dir, out_root = batch_dir / "inputs", batch_dir / "outputs"
         in_dir.mkdir()
         out_root.mkdir()
         try:
-            for job, name in zip(pending, names, strict=True):
-                to_cif_file(job.atom_array, in_dir / f"{name}.cif")
+            for job, name, chain_msas in zip(pending, names, msas, strict=True):
+                cif_in = in_dir / f"{name}.cif"
+                to_cif_file(job.atom_array, cif_in)
+                if chain_msas:
+                    self._add_msa_header(cif_in, chain_msas)
             self._run_rf3(in_dir, out_root)
 
             n_ok = 0
-            for job, name in zip(pending, names, strict=True):
-                if self._finalize(job, out_root / name, name) is not None:
+            for job, name, ents in zip(pending, names, entities, strict=True):
+                if self._finalize(job, ents, out_root / name, name) is not None:
                     n_ok += 1
             return n_cached + n_ok
         finally:
@@ -115,6 +135,14 @@ class RF3Oracle(OracleMetric):
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _add_msa_header(cif_path: Path, chain_msas: dict[str, Path]) -> None:
+        """Insert RF3's ``_msa_paths_by_chain_id.<chain>`` items right after the ``data_`` line."""
+        lines = cif_path.read_text().splitlines(keepends=True)
+        idx = next(i for i, ln in enumerate(lines) if ln.startswith("data_"))
+        items = [f"_msa_paths_by_chain_id.{c}   {Path(p).resolve()}\n" for c, p in chain_msas.items()]
+        cif_path.write_text("".join(lines[: idx + 1] + ["#\n", *items, "#\n"] + lines[idx + 1 :]))
 
     def _build_command(self, in_dir: Path, out_dir: Path) -> list[str]:
         cmd = [self.rf3_executable, "fold", f"inputs={in_dir}", f"out_dir={out_dir}"]
@@ -141,7 +169,7 @@ class RF3Oracle(OracleMetric):
         if proc.returncode != 0:
             raise RuntimeError(f"rf3 fold failed (exit {proc.returncode}):\n{proc.stderr[-3000:]}")
 
-    def _finalize(self, job: OracleJobInput, rf3_dir: Path, name: str) -> dict | None:
+    def _finalize(self, job: OracleJobInput, entities: list[ChainEntity], rf3_dir: Path, name: str) -> dict | None:
         """Turn RF3's best-ranked sample for one design into the canonical CIF + confidence JSON."""
         summary_path = rf3_dir / f"{name}_summary_confidences.json"
         detail_path = rf3_dir / f"{name}_confidences.json"
@@ -167,7 +195,9 @@ class RF3Oracle(OracleMetric):
             if not unambiguous:
                 chain_of_interest = None
 
-        metrics = extract_confidence_metrics(summary, chain_of_interest, chains_in_order)
+        # RF3 reports plain chain ids; the pipeline's chain of interest and metric keys use chain instance ids.
+        iid_of = {e.chain_id: e.iid for e in entities}
+        metrics = extract_confidence_metrics(summary, chain_of_interest, [iid_of.get(c, c) for c in chains_in_order])
         metrics["chain_of_interest"] = chain_of_interest
         self._save_confidence_json(metrics, self.confidence_path(job.out_dir, job.example_id, job.save_id))
         return metrics
