@@ -42,6 +42,7 @@ with (
     from rfproteina.nn.execution import configure_bioir, configure_native, inference_backend
     from rfproteina.nn.local_latents_transformer import LocalLatentsTransformer
     from rfproteina.proteina import Proteina
+    from rfproteina.utils.device import accelerator_name, resolve_precision
     from rfproteina.search.base_strategy import SearchStrategy
     from rfproteina.search.beam_search import BeamSearchStrategy
     from rfproteina.utils.ddp import RankedLogger
@@ -619,7 +620,10 @@ def run_generation(
         config_name: Name of the config (used for output directory naming)
         model: Optional model already loaded with ``Proteina.from_pretrained``.
     """
-    precision = cfg.precision
+    accelerator = accelerator_name()
+    precision = resolve_precision(cfg.precision, accelerator)
+    if accelerator == "mps":
+        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     torch.set_float32_matmul_precision("high" if precision in ("32", "32-true") else "medium")
 
     # Determine config name for output paths
@@ -702,12 +706,12 @@ def run_generation(
             ),
             num_workers=num_workers,
             worker_init_fn=partial(initialize_worker_verbosity, verbose=cfg.get("verbose", False)),
-            pin_memory=True,
+            pin_memory=accelerator == "cuda",
         )
 
     trainer = L.Trainer(
-        accelerator="gpu",
-        devices=cfg.hardware.ngpus_per_node_,  # This is number of gpus per node, not total
+        accelerator={"cuda": "gpu"}.get(accelerator, accelerator),
+        devices=cfg.hardware.ngpus_per_node_ if accelerator == "cuda" else 1,  # This is number of gpus per node, not total
         num_nodes=cfg.hardware.nnodes_,
         default_root_dir=cfg.out_dir,
         logger=False,
