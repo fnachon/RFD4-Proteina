@@ -1,0 +1,29 @@
+# AF2 refolding oracle for Apple Silicon: ColabDesign on jax-mps, run in its own environment.
+# Set AF2_PYTHON (that environment's python) and AF2_DIR (params_model_*.npz), or pass python / params_dir.
+#
+# Protein only (no ligands, DNA or RNA), single sequence (no MSA). A single chain is folded with model_1_ptm; a
+# binder complex (chain of interest + other protein chains) uses model_1_multimer_v3 with the NON-binder chains'
+# backbone given as a template, as in the Proteina-Complexa AF2 evaluation. Interface metrics are therefore
+# binder-vs-templated-target, matching the CUDA AF2 oracle's `sa_mask('C_CRD')` PPI setting only in spirit.
+
+oracle:
+  _target_: rfproteina.metrics.oracles.af2_mlx_oracle.AF2MLXOracle
+  oracle_name: af2_mlx
+  model_name: model_1_ptm  # model_{1..5}_ptm (single chain)
+  aggregation: [median]
+  required_tags_any:
+    - af2_refolding
+    - unconditional_refolding
+    - motif_scaffold_refolding
+    - internal_coordinate_motif_scaffold_refolding
+    - ame_no_ligand_refolding
+
+oracle_ppi:
+  _target_: rfproteina.metrics.oracles.af2_mlx_oracle.AF2MLXOracle
+  oracle_name: af2_mlx_ppi
+  model_name: model_1_multimer_v3  # model_{1..5}_multimer_v3
+  aggregation: [median]
+  frac_under_thresholds:
+    min_ipae_coi: [1, 1.5, 2]
+  required_tags_any:
+    - ppi_refolding

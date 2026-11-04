@@ -112,3 +112,53 @@ def test_chain_iid_is_used_for_labels():
     arr.chain_iid[:] = "A_1"
     (e,) = chain_entities(arr)
     assert e.chain_id == "A" and e.iid == "A_1" and e.is_chain("A_1") and e.is_chain("A") and not e.is_chain("B")
+
+
+def test_af2_mlx_requires_env(monkeypatch):
+    from rfproteina.metrics.oracles.af2_mlx_oracle import AF2MLXOracle
+
+    monkeypatch.delenv("AF2_PYTHON", raising=False)
+    monkeypatch.delenv("AF2_DIR", raising=False)
+    with pytest.raises(ValueError, match="AF2_PYTHON"):
+        AF2MLXOracle()
+    with pytest.raises(ValueError, match="AF2_DIR"):
+        AF2MLXOracle(python="/x/python")
+    with pytest.raises(ValueError, match="template"):
+        AF2MLXOracle(python="/x/python", params_dir="/p", template_query="x")
+    with pytest.raises(ValueError, match="model_name"):
+        AF2MLXOracle(python="/x/python", params_dir="/p", model_name="model_1")
+
+
+def test_af2_mlx_plan(complex_array):
+    from rfproteina.metrics.oracles.af2_mlx_oracle import AF2MLXOracle
+
+    o = AF2MLXOracle(python="/x/python", params_dir="/p")
+    job = OracleJobInput(atom_array=complex_array[complex_array.chain_id != "L"], example_id="d", out_dir=Path("."), chain_of_interest="B")
+    ents, binder = o._plan(job)
+    assert [e.chain_id for e in ents] == ["A", "B"] and binder.chain_id == "B"
+    with pytest.raises(ValueError, match="not protein"):  # the ATP ligand chain
+        o._plan(OracleJobInput(atom_array=complex_array, example_id="d", out_dir=Path("."), chain_of_interest="B"))
+    single = OracleJobInput(atom_array=complex_array[complex_array.chain_id == "A"], example_id="d", out_dir=Path("."))
+    assert o._plan(single)[1] is None
+
+
+def test_af2_mlx_run_worker_tolerates_exit_crash_only_with_results(tmp_path, monkeypatch):
+    import sys
+
+    import rfproteina.metrics.oracles.af2_mlx_oracle as mod
+
+    crash = tmp_path / "crash.py"
+    crash.write_text("import os, signal; os.kill(os.getpid(), signal.SIGABRT)")
+    monkeypatch.setattr(mod, "_WORKER", crash)
+    oracle = mod.AF2MLXOracle(python=sys.executable, params_dir="/p")
+
+    good = tmp_path / "ok.json"
+    good.write_text("{}")
+    oracle._run_worker(tmp_path / "m.json", [good])  # all results present: the exit crash is tolerated
+
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"error": "x"}')
+    with pytest.raises(RuntimeError, match="worker failed"):
+        oracle._run_worker(tmp_path / "m.json", [bad])
+    with pytest.raises(RuntimeError, match="worker failed"):
+        oracle._run_worker(tmp_path / "m.json", [tmp_path / "missing.json"])
