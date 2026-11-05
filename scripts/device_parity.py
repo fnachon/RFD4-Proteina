@@ -23,23 +23,40 @@ import sys
 from pathlib import Path
 
 
-def _child(device: str, seed: int, hydra_args: list[str]) -> None:
-    """Run generation on ``device`` with all random draws taken from a seeded CPU generator."""
+_TOKEN_CAP = 2048  # token-axis length used for padding-independent draws
+
+
+def _child(device: str, seed: int, hydra_args: list[str], tokenwise: bool = False) -> None:
+    """Run generation on ``device`` with all random draws taken from a seeded CPU generator.
+
+    With ``tokenwise``, a draw of shape ``[..., n, d]`` (3+ dims) is made at ``[..., _TOKEN_CAP, d]`` and sliced to
+    ``n`` tokens, so token ``i`` gets the same noise whatever the padded length ``n`` is (needed to compare runs with
+    different ``compile_lengths``). Set ``RFP_PARITY_LOG_SHAPES=1`` to print every draw shape.
+    """
     os.environ["RFP_DEVICE"] = device
     import torch
 
     gen = torch.Generator(device="cpu").manual_seed(seed)
     orig_randn = torch.randn
+    log_shapes = bool(os.environ.get("RFP_PARITY_LOG_SHAPES"))
 
     def _split_size(size):
         return tuple(size[0]) if len(size) == 1 and isinstance(size[0], (tuple, list, torch.Size)) else tuple(size)
 
+    def _draw(shape, dtype):
+        if log_shapes:
+            print(f"[parity-randn] {tuple(shape)}", flush=True)
+        if tokenwise and len(shape) >= 3 and shape[-2] <= _TOKEN_CAP:
+            full = orig_randn(*shape[:-2], _TOKEN_CAP, shape[-1], generator=gen, dtype=dtype)
+            return full[..., : shape[-2], :].contiguous()
+        return orig_randn(*shape, generator=gen, dtype=dtype)
+
     def randn(*size, generator=None, dtype=None, device=None, **kwargs):
-        out = orig_randn(*_split_size(size), generator=gen, dtype=dtype)
+        out = _draw(_split_size(size), dtype)
         return out.to(device=device) if device is not None else out
 
     def randn_like(x, *, dtype=None, **kwargs):
-        return orig_randn(tuple(x.shape), generator=gen, dtype=dtype or x.dtype).to(x.device)
+        return _draw(tuple(x.shape), dtype or x.dtype).to(x.device)
 
     torch.randn, torch.randn_like = randn, randn_like
 
@@ -81,27 +98,34 @@ def main() -> int:
     parser.add_argument("--devices", nargs=2, default=["cpu", "mps"], metavar=("REF", "TEST"))
     parser.add_argument("--out-root", default="runs/parity")
     parser.add_argument("--max-rmsd", type=float, default=1.0, help="pass threshold on superimposed CA RMSD (A)")
+    parser.add_argument("--tokenwise-noise", action="store_true", help="make noise independent of the padded length")
+    parser.add_argument("--ref-extra", nargs="*", default=[], help="extra Hydra overrides for the reference run only")
+    parser.add_argument("--test-extra", nargs="*", default=[], help="extra Hydra overrides for the test run only")
     parser.add_argument("--child", metavar="DEVICE", help=argparse.SUPPRESS)
     parser.add_argument("hydra_args", nargs="*")
     args = parser.parse_args()
 
     if args.child:
-        _child(args.child, args.seed, args.hydra_args)
+        _child(args.child, args.seed, args.hydra_args, args.tokenwise_noise)
         return 0
 
     out = {}
-    for dev in args.devices:
-        out_dir = Path(args.out_root) / dev
-        cmd = [sys.executable, __file__, "--child", dev, "--seed", str(args.seed), "--",
-               *args.hydra_args, f"seed={args.seed}", f"out_dir={out_dir}"]  # fmt: skip
+    same_device = args.devices[0] == args.devices[1]
+    for i, dev in enumerate(args.devices):
+        label = ("ref", "test")[i] if same_device else dev
+        extra = (args.ref_extra, args.test_extra)[i]
+        out_dir = Path(args.out_root) / label
+        tw = ["--tokenwise-noise"] if args.tokenwise_noise else []
+        cmd = [sys.executable, __file__, "--child", dev, "--seed", str(args.seed), *tw, "--",
+               *args.hydra_args, *extra, f"seed={args.seed}", f"out_dir={out_dir}"]  # fmt: skip
         print(f"[{dev}] {' '.join(cmd)}", flush=True)
         rc = subprocess.run(cmd, check=False).returncode
         if rc != 0:
             print(f"[{dev}] generation failed (exit {rc})")
             return 2
-        out[dev] = sorted(glob.glob(str(out_dir / "inference_samples" / "**" / "*_generated.cif*"), recursive=True))
+        out[label] = sorted(glob.glob(str(out_dir / "inference_samples" / "**" / "*_generated.cif*"), recursive=True))
 
-    ref, test = args.devices
+    ref, test = ("ref", "test") if same_device else args.devices
     if len(out[ref]) != len(out[test]) or not out[ref]:
         print(f"output mismatch: {len(out[ref])} vs {len(out[test])} designs")
         return 2
