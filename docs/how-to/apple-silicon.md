@@ -53,3 +53,26 @@ AF3 and OpenFold3 need CUDA. These oracles run on a Mac, each in its own environ
 None of them forwards templates, so pass rates are not comparable to AF3's. MSAs come from a local MMseqs2
 (`MMSEQS_BIN`, `MMSEQS_DB`; built with the Metal GPU backend it runs on the Mac GPU), cached by sequence in
 `RFP_MSA_CACHE`. Use `msa_mode` in the oracle config to choose none, target-only or all chains.
+
+### Where each oracle runs
+
+| Oracle | Device on a Mac |
+|---|---|
+| `rf3` | RF3 selects its own accelerator (MPS on Apple Silicon). |
+| `boltz2` | `accelerator: gpu` (the default) resolves to MPS. The oracle adds `--no_kernels` on macOS because Boltz's trifast kernels are CUDA-only. |
+| `minifold` | MiniFold's `predict.py` picks CUDA, then MPS, then CPU, and runs its model in bf16 autocast. |
+| `af2_mlx` | jax-mps (Metal). |
+
+### Tested on, and known limits
+
+- The four oracles were exercised end to end through `rfd4-generate` on a monomer and a protein-protein binder
+  example. Multi-chain complexes beyond a binder and its target, antibodies, DNA and small-molecule inputs were not
+  run through them.
+- MiniFold folds a single sequence with no MSA and returns pLDDT only, so criteria on pTM, ipTM or PAE cannot be
+  evaluated with it. It is an apo, single-chain designability check, not a complex prediction.
+- On a repetitive designed monomer, MiniFold predicted an extended helix far from the design (superimposed RMSD
+  13.6-22 Å) while RF3, Boltz-2 and AF2 agreed with it. Compare its pLDDT with the other oracles' before relying on it
+  alone.
+- AF2 on jax-mps can abort inside the native library when its process exits, after all results are written. The
+  oracle accepts a non-zero exit only if every result file is present and none reports an error.
+- All four forward no templates, so refolds of template-conditioned tasks are not comparable to AF3's.
