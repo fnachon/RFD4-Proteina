@@ -213,6 +213,12 @@ class TriangleMultiplicativeUpdate(nn.Module):
                     z, self._direction, mask, eps=self.layer_norm_in.eps, **parameters
                 )
 
+        if z.device.type == "mps" and self._plain_linears() and mask.shape == z.shape[:-1]:
+            from rfproteina.nn.modules import metal_trimul
+
+            if metal_trimul.enabled_for(z, self.c_z, self.c_hidden):
+                return metal_trimul.tri_mult_metal(self, z, mask)
+
         mask = mask.unsqueeze(-1)
 
         z = self.layer_norm_in(z)
