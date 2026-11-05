@@ -66,8 +66,8 @@ None of them forwards templates, so pass rates are not comparable to AF3's. MSAs
 ### Tested on, and known limits
 
 - The four oracles were exercised end to end through `rfd4-generate` on a monomer and a protein-protein binder
-  example. Multi-chain complexes beyond a binder and its target, antibodies, DNA and small-molecule inputs were not
-  run through them.
+  example. Small-molecule binders were run through RF3 and Boltz-2 only (below). Multi-chain complexes beyond a
+  binder and its target, antibodies, and DNA were not run through any of them.
 - MiniFold folds a single sequence with no MSA and returns pLDDT only, so criteria on pTM, ipTM or PAE cannot be
   evaluated with it. It is an apo, single-chain designability check, not a complex prediction.
 - On a repetitive designed monomer, MiniFold predicted an extended helix far from the design (superimposed RMSD
@@ -76,3 +76,27 @@ None of them forwards templates, so pass rates are not comparable to AF3's. MSAs
 - AF2 on jax-mps can abort inside the native library when its process exits, after all results are written. The
   oracle accepts a non-zero exit only if every result file is present and none reports an error.
 - All four forward no templates, so refolds of template-conditioned tasks are not comparable to AF3's.
+
+### Small-molecule binders (RF3 and Boltz-2)
+
+Designs for the four `small_molecule_binder/sm_binder` ligands (`medium/midpeak`, `metrics_tags=[sm_binder_refolding]`,
+no MSA, `seed=0`), refolded with each oracle on the same Mac. Medians per target; "recovered" counts designs whose
+refolded backbone and ligand are both within 2 Å RMSD of the design (a threshold chosen for this table, not one of
+the repository's pass criteria).
+
+| Target | Designs | Oracle | pLDDT | Backbone RMSD (Å) | Ligand RMSD (Å) | Recovered |
+|---|---|---|---|---|---|---|
+| SAM | 2 | RF3 / Boltz-2 | 88 / 94 | 0.4 / 0.6 | 12.1 / 13.2 | 0 / 0 |
+| FAD | 4 | RF3 / Boltz-2 | 86 / 89 | 0.6 / 0.8 | 4.7 / 6.9 | 2 / 1 |
+| IAI | 4 | RF3 / Boltz-2 | 84 / 88 | 1.3 / 0.5 | 10.8 / 9.8 | 0 / 1 |
+| OQO | 4 | RF3 / Boltz-2 | 85 / 95 | 0.6 / 0.8 | 1.6 / 1.1 | 3 / 3 |
+
+- Every run completed and produced the ligand metrics. The refolded ligand has the same atoms and names as the
+  design in all 28 refolds, so the ligand RMSD compares like with like.
+- Most backbones refold well (22 of 28 within 2 Å). The ligand pose is recovered much less often (10 of 28, counting
+  both oracles) and varies by target: OQO is recovered for 3 of 4 designs by both oracles, SAM for none.
+- The two oracles mostly agree on which designs recover (OQO and FAD design 3 for both), so the spread across
+  targets reflects the designs, not one oracle.
+- Six of the 28 refolds have a backbone RMSD above 2 Å (up to 14.9 Å); keep such designs in pass-rate denominators.
+- RF3 does not report `pae_coi` or `iptm_coi`; Boltz-2 does. A run of 4 designs takes 4-6 minutes including generation
+  (FAD with Boltz-2 took 340 s, peak memory 11.5 GB).
