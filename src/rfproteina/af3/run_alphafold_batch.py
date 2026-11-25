@@ -1,4 +1,4 @@
-"""Batch fold wrapper for AF3-compatible weights, executed inside af3-open.sif.
+"""Batch fold wrapper for AF3-compatible weights (Mac/MPS port of RFD4-Proteina's af3-open.sif worker).
 
 Manifest format (JSON list)::
 
@@ -18,6 +18,7 @@ Spawned by :mod:`rfproteina.af3.af3_daemon`. Two run modes:
 """
 
 import datetime
+import inspect
 import json
 import os
 import pathlib
@@ -27,7 +28,8 @@ import threading
 import time
 from typing import Any
 
-import af3_runtime as _runtime
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # sibling import under PYTHONSAFEPATH=1
+import af3_runtime as _runtime  # noqa: E402
 import jax
 from absl import app, flags
 from alphafold3.constants import chemical_components
@@ -51,7 +53,10 @@ _JAX_COMPILATION_CACHE_DIR = flags.DEFINE_string(
     os.environ.get("AF3_JAX_CACHE_DIR"),
     "Persistent JAX compilation cache directory.",
 )
-_GPU_DEVICE = flags.DEFINE_integer("gpu_device", 0, "Visible JAX GPU index.")
+_GPU_DEVICE = flags.DEFINE_integer("gpu_device", 0, "Visible JAX device index.")
+_JAX_BACKEND = flags.DEFINE_enum("jax_backend", "mps", ["mps", "gpu", "cpu"], "JAX backend (mps on Apple Silicon).")
+_PREFETCH = flags.DEFINE_bool("prefetch", True, "Featurise design N+1 on a thread while N runs inference.")
+_TIMING_LOG = flags.DEFINE_string("timing_log", None, "Optional JSONL file receiving per-design stage timings.")
 _BUCKETS = flags.DEFINE_list(
     "buckets",
     ["64", "128", "192", "256", "384", "512", "768", "1024", "1536", "2048", "2560", "3072"],
@@ -59,7 +64,7 @@ _BUCKETS = flags.DEFINE_list(
 )
 _FLASH_ATTENTION_IMPLEMENTATION = flags.DEFINE_enum(
     "flash_attention_implementation",
-    "triton",
+    "xla",
     ["triton", "cudnn", "xla"],
     "AF3 attention backend.",
 )
@@ -131,6 +136,15 @@ def _build_fold_input(payload: dict) -> Any:
     )
 
 
+_FEATURISE_HAS_OF3 = "of3_weights" in inspect.signature(_featurisation.featurise_input).parameters
+
+
+def _log_timing(record: dict) -> None:
+    if _TIMING_LOG.value:
+        with open(_TIMING_LOG.value, "a") as handle:
+            handle.write(json.dumps(record) + "\n")
+
+
 def _featurise(
     fold_input: Any,
     max_template_date: datetime.date,
@@ -149,7 +163,7 @@ def _featurise(
         conformer_max_iterations=conformer_max_iters,
         resolve_msa_overlaps=resolve_msa_overlaps,
         fix_standalone_glycans=True,
-        of3_weights=of3_weights,
+        **({"of3_weights": of3_weights} if _FEATURISE_HAS_OF3 else {}),
     )
 
 
@@ -184,6 +198,7 @@ def _run(
     def producer() -> None:
         for i, payload in enumerate(designs):
             try:
+                t_feat = time.perf_counter()
                 fold_input = _build_fold_input(payload)
                 feats = _featurise(
                     fold_input,
@@ -192,17 +207,47 @@ def _run(
                     _RESOLVE_MSA_OVERLAPS.value,
                     of3_weights=of3_weights,
                 )
+                payload["_t_featurise_s"] = time.perf_counter() - t_feat
                 q.put(("ok", i, payload, fold_input, feats))
             except Exception as exc:
                 q.put(("err", i, payload, exc))
         q.put(("done",))
 
-    t = threading.Thread(target=producer, name="af3-feat-producer", daemon=True)
-    t.start()
+    if _PREFETCH.value:
+        t = threading.Thread(target=producer, name="af3-feat-producer", daemon=True)
+        t.start()
+        get = q.get
+    else:  # sequential reference path: featurise then fold, one design at a time
+        import collections
+
+        pending = collections.deque()
+        gen = iter(range(len(designs)))
+        q_local: queue.Queue = queue.Queue()
+
+        def get():
+            if q_local.empty():
+                try:
+                    i = next(gen)
+                except StopIteration:
+                    return ("done",)
+                one = designs[i]
+                try:
+                    t_feat = time.perf_counter()
+                    fold_input = _build_fold_input(one)
+                    feats = _featurise(fold_input, max_template_date, _CONFORMER_MAX_ITERATIONS.value,
+                                       _RESOLVE_MSA_OVERLAPS.value, of3_weights=of3_weights)
+                    one["_t_featurise_s"] = time.perf_counter() - t_feat
+                    return ("ok", i, one, fold_input, feats)
+                except Exception as exc:
+                    return ("err", i, one, exc)
+            return q_local.get()
+        t = None
 
     n_ok = 0
     while True:
-        msg = q.get()
+        t_wait = time.perf_counter()
+        msg = get()
+        wait_s = time.perf_counter() - t_wait
         if msg[0] == "done":
             break
         if msg[0] == "err":
@@ -214,7 +259,9 @@ def _run(
         _, i, payload, fold_input, feats = msg
         try:
             os.makedirs(payload["output_dir"], exist_ok=True)
+            t_inf = time.perf_counter()
             results = _infer_and_extract(fold_input, feats, model_runner)
+            t_write = time.perf_counter()
             _runtime.write_outputs(
                 all_inference_results=results,
                 output_dir=payload["output_dir"],
@@ -222,6 +269,13 @@ def _run(
                 compress_large_output_files=False,
                 save_full_outputs=save_full,
             )
+            t_end = time.perf_counter()
+            _log_timing({
+                "name": payload["name"], "padded_tokens": int(feats[0]["aatype"].shape[-1]),
+                "featurise_s": round(payload.get("_t_featurise_s", float("nan")), 3),
+                "wait_for_features_s": round(wait_s, 3),
+                "inference_s": round(t_write - t_inf, 3), "write_s": round(t_end - t_write, 3),
+            })
             print(
                 f"Batch wrapper: ({i + 1}/{len(designs)}) {payload['name']} OK",
                 file=sys.stderr,
@@ -233,7 +287,8 @@ def _run(
                 f"Batch wrapper: ({i + 1}/{len(designs)}) {payload['name']} FAILED in infer/write: {exc}",
                 file=sys.stderr,
             )
-    t.join()
+    if t is not None:
+        t.join()
     return n_ok
 
 
@@ -244,8 +299,13 @@ def _setup_runner() -> tuple[Any, datetime.date, bool]:
 
     max_template_date = datetime.date.fromisoformat(_MAX_TEMPLATE_DATE.value)
 
-    devices = jax.local_devices(backend="gpu")
+    t_setup = time.perf_counter()
+    devices = jax.local_devices(backend=_JAX_BACKEND.value)
     gpu_device = _GPU_DEVICE.value
+    # backend_ops (MPS) and tokamax both read the default device at trace time.
+    jax.config.update("jax_default_device", devices[gpu_device])
+    if _JAX_BACKEND.value == "gpu":
+        _runtime._pin_tokamax_to_xla()
     model_dir = _MODEL_DIR.value or os.environ.get("AF3_MODEL_DIR")
     if model_dir is None:
         raise ValueError("--model_dir or AF3_MODEL_DIR is required")
@@ -269,6 +329,7 @@ def _setup_runner() -> tuple[Any, datetime.date, bool]:
         cache_dir=(pathlib.Path(_JAX_COMPILATION_CACHE_DIR.value) if _JAX_COMPILATION_CACHE_DIR.value else None),
     )
     _ = model_runner.model_params  # force weights load
+    _log_timing({"name": "__setup__", "weights_load_s": round(time.perf_counter() - t_setup, 3)})
     return model_runner, max_template_date, of3_weights
 
 

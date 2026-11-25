@@ -40,7 +40,32 @@ It runs both devices with identical CPU-drawn noise and compares the superimpose
 
 ## Refolding oracles
 
-AF3 and OpenFold3 need CUDA. These oracles run on a Mac, each in its own environment and selected with
+### AF3 (native, MPS)
+
+The stock `af3` oracle runs natively on a Mac against the Apple Silicon AlphaFold 3 fork
+(`fnachon/alphafold3`: jax-mps, MLX fused attention). With `AF3_IMAGE` unset on macOS (or `AF3_RUNTIME=native`)
+the worker is launched from the AF3 venv instead of `apptainer run`; everything else (warm daemon, manifest
+protocol, templates, metrics) is the upstream code path, so `metrics_tags` work as on CUDA.
+
+```bash
+export AF3_PYTHON=/Users/florian/Documents/Science-IA/alphafold3/.venv/bin/python
+export AF3_MODEL_DIR=/Users/florian/Documents/Science-IA/alphafold3/weights
+export AF3_JAX_CACHE_DIR=$HOME/.cache/rfd4_af3_jax   # required by the launcher; see note below
+# optional: AF3_JAX_BACKEND=mps|cpu (default mps), JAX_MPS_ASYNC_DISPATCH=1 (experimental)
+rfd4-generate inputs=... metrics_tags='[ppi_refolding]'
+```
+
+Notes:
+
+- jax-mps 0.10.9 cannot serialise executables (`Serialize not implemented`), so the persistent compilation
+  cache does nothing on MPS and every new worker process recompiles each token bucket. Keep one process alive:
+  the oracle's warm daemon does this within a run; reuse it across runs with `af3_daemon.py launch`.
+- tokamax autotuning and the GLU/layer-norm XLA pin are CUDA workarounds and are skipped on MPS.
+- OpenFold3 weights need the `sokrypton/alphafold3` fork's OF3 branches; the worker refuses them on this build.
+
+### Other oracles
+
+These oracles also run on a Mac, each in its own environment and selected with
 `metrics/refolding_oracles=<name>`:
 
 | Oracle | Config | Environment variables |
@@ -75,7 +100,8 @@ None of them forwards templates, so pass rates are not comparable to AF3's. MSAs
   alone.
 - AF2 on jax-mps can abort inside the native library when its process exits, after all results are written. The
   oracle accepts a non-zero exit only if every result file is present and none reports an error.
-- All four forward no templates, so refolds of template-conditioned tasks are not comparable to AF3's.
+- All four forward no templates, so refolds of template-conditioned tasks are not comparable to AF3's (use the
+  native `af3` oracle above when templates matter).
 
 ### Small-molecule binders (RF3 and Boltz-2)
 

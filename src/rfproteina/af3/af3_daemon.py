@@ -32,12 +32,19 @@ import threading
 import time
 from pathlib import Path
 
-from af3_apptainer import (
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # sibling import under PYTHONSAFEPATH=1
+from af3_apptainer import (  # noqa: E402
     AF3_NUM_RECYCLES,
+    AF3_RUNTIME,
     build_apptainer_fold_command,
 )
 
-_REQUIRED_ENV_VARS = ("AF3_IMAGE", "AF3_JAX_CACHE_DIR", "AF3_MODEL_DIR")
+# The native runtime (Apple Silicon) needs the AF3 venv interpreter instead of a container image.
+_REQUIRED_ENV_VARS = (
+    ("AF3_PYTHON", "AF3_JAX_CACHE_DIR", "AF3_MODEL_DIR")
+    if AF3_RUNTIME == "native"
+    else ("AF3_IMAGE", "AF3_JAX_CACHE_DIR", "AF3_MODEL_DIR")
+)
 
 
 # ----------------------------------------------------------------------------

@@ -9,6 +9,7 @@ available. Importing this module must not trigger any of that.
 """
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -21,6 +22,14 @@ AF3_NUM_RECYCLES = 5
 # Ampere/Ada cards here, failing folds with ``RESOURCE_EXHAUSTED``; ``cudnn`` is robust everywhere, so set
 # ``=triton`` only on a datacenter GPU. Lowercased: the container flag is a case-sensitive absl enum.
 AF3_FLASH_ATTENTION_IMPLEMENTATION = os.environ.get("AF3_FLASH_ATTENTION_IMPLEMENTATION", "cudnn").strip().lower()
+
+# Native (no-container) runtime, e.g. Apple Silicon: AF3 runs from its own venv with jax-mps.
+# Selected by AF3_RUNTIME=native, or automatically on macOS when AF3_IMAGE is unset.
+#   AF3_PYTHON       interpreter of the AF3 venv (required)
+#   AF3_JAX_BACKEND  mps (default) | cpu | gpu
+AF3_RUNTIME = os.environ.get("AF3_RUNTIME", "").strip().lower() or (
+    "native" if sys.platform == "darwin" and not os.environ.get("AF3_IMAGE") else "apptainer"
+)
 
 # Default location of the warm-worker entry script (sibling under scripts/).
 _DEFAULT_BATCH_SCRIPT = Path(__file__).resolve().parent / "run_alphafold_batch.py"
@@ -112,13 +121,41 @@ def build_apptainer_fold_command(
             subprocess loads AF3 once and reads manifest paths on stdin
             instead of folding a single ``--manifest`` argument and exiting.
     """
-    sif = _require("AF3_IMAGE")
     jax_cache = _require("AF3_JAX_CACHE_DIR")
     weights = _require("AF3_MODEL_DIR")
     if batch_script is None:
         batch_script = _DEFAULT_BATCH_SCRIPT
     batch_path = Path(batch_script).resolve()
 
+    if AF3_RUNTIME == "native":
+        backend = os.environ.get("AF3_JAX_BACKEND", "mps").strip().lower()
+        cmd = [
+            "env",
+            "XLA_PYTHON_CLIENT_PREALLOCATE=false",
+            f"AF3_MODEL_DIR={weights}",
+            # The worker imports its sibling af3_runtime.py; keep that working under PYTHONSAFEPATH=1.
+            f"PYTHONPATH={batch_path.parent}",
+            _require("AF3_PYTHON"),
+            str(batch_path),
+            f"--jax_backend={backend}",
+            f"--num_recycles={AF3_NUM_RECYCLES}",
+            # No triton/cudnn off NVIDIA; the fork's backend_ops picks MLX sdpa on MPS.
+            f"--flash_attention_implementation={'xla' if backend != 'gpu' else AF3_FLASH_ATTENTION_IMPLEMENTATION}",
+            "--num_diffusion_samples=1",
+            f"--gpu_device={0 if backend != 'gpu' else int(gpu_device)}",
+            f"--jax_compilation_cache_dir={jax_cache}",
+            f"--model_dir={weights}",
+            f"--save_full_outputs={'true' if save_full_outputs else 'false'}",
+        ]
+        if serve:
+            cmd.append("--serve")
+        else:
+            if manifest_path is None:
+                raise ValueError("manifest_path is required when serve is False.")
+            cmd.append(f"--manifest={manifest_path}")
+        return cmd
+
+    sif = _require("AF3_IMAGE")
     cmd = [
         "apptainer",
         "run",
