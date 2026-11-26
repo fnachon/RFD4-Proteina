@@ -13,7 +13,9 @@ bash skills/rfd4-proteina-setup/scripts/preflight.sh
 rfd4-generate inputs=data/benchmarks/monomer/monomer-short.cif.zst num_replicates=1 out_dir=./runs/smoke
 ```
 
-The device is chosen as CUDA, then MPS, then CPU. Force one with `RFP_DEVICE=cuda|mps|cpu`.
+The device follows `hardware.accelerator`: the default `gpu` takes CUDA, then MPS, and stops with an error when neither
+exists rather than running on the CPU. `auto` falls back to the CPU, and `cpu`, `cuda` or `mps` select that device.
+`RFP_DEVICE=cuda|mps|cpu` overrides the config.
 
 ## What differs from CUDA
 
@@ -52,6 +54,7 @@ export AF3_PYTHON=/Users/florian/Documents/Science-IA/alphafold3/.venv/bin/pytho
 export AF3_MODEL_DIR=/Users/florian/Documents/Science-IA/alphafold3/weights
 export AF3_JAX_CACHE_DIR=$HOME/.cache/rfd4_af3_jax   # required by the launcher; see note below
 # optional: AF3_JAX_BACKEND=mps|cpu (default mps), JAX_MPS_ASYNC_DISPATCH=1 (experimental)
+# optional: AF3_FOLD_TIMEOUT_PER_DESIGN_S=<seconds> (default 120 per design on the daemon, no limit on a direct fold)
 rfd4-generate inputs=... metrics_tags='[ppi_refolding]'
 ```
 
@@ -62,6 +65,9 @@ Notes:
 - jax-mps (checked with 0.10.9 and 0.10.11) does not store compiled executables, so the persistent compilation
   cache does nothing on MPS and every new worker process recompiles each token bucket. Keep one process alive:
   the oracle's warm daemon does this within a run; reuse it across runs with `af3_daemon.py launch`.
+- `AF3_RUNTIME` must be `apptainer` or `native`, and `AF3_JAX_BACKEND` `mps`, `cpu` or `gpu`; other values are rejected.
+- Folds slower than 2 minutes per design (large complexes) need `AF3_FOLD_TIMEOUT_PER_DESIGN_S`; the daemon's wait is
+  at least one hour either way.
 - tokamax autotuning and the GLU/layer-norm XLA pin are CUDA workarounds and are skipped on MPS.
 - OpenFold3 weights need the `sokrypton/alphafold3` fork's OF3 branches; the worker refuses them on this build.
 

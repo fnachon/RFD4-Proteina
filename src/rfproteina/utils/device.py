@@ -7,7 +7,16 @@ import os
 
 import torch
 
-__all__ = ["accelerator_name", "autocast_device_type", "get_device", "has_sdpa_backend", "prefer_eager_trunk", "resolve_precision"]
+__all__ = [
+    "accelerator_name",
+    "autocast_device_type",
+    "autocast_dtype",
+    "get_device",
+    "has_sdpa_backend",
+    "prefer_eager_trunk",
+    "resolve_accelerator",
+    "resolve_precision",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +38,39 @@ def accelerator_name() -> str:
     if _mps_available():
         return "mps"
     return "cpu"
+
+
+def resolve_accelerator(requested: str | None = None) -> str:
+    """Accelerator for a run from ``hardware.accelerator``; ``RFP_DEVICE`` overrides it.
+
+    ``gpu`` takes CUDA, then MPS, and raises when neither exists, as Lightning does, instead of running on the CPU
+    silently. ``auto`` (or unset) takes CUDA, MPS, then the CPU. ``cuda``, ``mps`` and ``cpu`` are taken literally.
+    """
+    if os.environ.get("RFP_DEVICE", "").strip():
+        return accelerator_name()
+    requested = (requested or "auto").strip().lower()
+    if requested not in ("gpu", "auto", "cuda", "mps", "cpu"):
+        raise ValueError(f"hardware.accelerator must be gpu, auto, cuda, mps or cpu, got {requested!r}")
+    detected = accelerator_name()
+    if requested == "auto":
+        return detected
+    if requested == "gpu":
+        if detected == "cpu":
+            raise RuntimeError(
+                "hardware.accelerator=gpu but neither CUDA nor MPS is available; "
+                "set hardware.accelerator=cpu (or RFP_DEVICE=cpu) to run on the CPU."
+            )
+        return detected
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("hardware.accelerator=cuda but CUDA is not available.")
+    if requested == "mps" and not _mps_available():
+        raise RuntimeError("hardware.accelerator=mps but MPS is not available.")
+    return requested
+
+
+def autocast_dtype(device_type: str) -> torch.dtype | None:
+    """The autocast dtype active for ``device_type``, or ``None`` outside autocast on that device."""
+    return torch.get_autocast_dtype(device_type) if torch.is_autocast_enabled(device_type) else None
 
 
 def get_device(index: int | None = None) -> torch.device:

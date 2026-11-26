@@ -42,7 +42,7 @@ with (
     from rfproteina.nn.execution import configure_bioir, configure_native, inference_backend
     from rfproteina.nn.local_latents_transformer import LocalLatentsTransformer
     from rfproteina.proteina import Proteina
-    from rfproteina.utils.device import accelerator_name, resolve_precision
+    from rfproteina.utils.device import accelerator_name, resolve_accelerator, resolve_precision
     from rfproteina.search.base_strategy import SearchStrategy
     from rfproteina.search.beam_search import BeamSearchStrategy
     from rfproteina.utils.ddp import RankedLogger
@@ -628,7 +628,9 @@ def run_generation(
         prepare_dataset: Optional callback to validate or replace the seeded dataset before
             partitioning, compilation and loading. The loader consumes the returned samples.
     """
-    accelerator = accelerator_name()
+    accelerator = resolve_accelerator(cfg.hardware.get("accelerator"))
+    if accelerator != accelerator_name():
+        os.environ["RFP_DEVICE"] = accelerator  # the rest of the run (autocast, attention paths) follows the request
     precision = resolve_precision(cfg.precision, accelerator)
     if accelerator == "mps":
         os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
