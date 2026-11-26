@@ -103,7 +103,9 @@ class MiniFoldOracle(OracleMetric):
 
         names = [self.manifest_job_name(j) for j in pending]
         if len(set(names)) != len(names):
-            raise ValueError(f"MiniFoldOracle: duplicate job names in one batch: {sorted({n for n in names if names.count(n) > 1})}")
+            raise ValueError(
+                f"MiniFoldOracle: duplicate job names in one batch: {sorted({n for n in names if names.count(n) > 1})}"
+            )
         chains = [self._select_chain(j) for j in pending]
 
         batch_dir = Path(tempfile.mkdtemp(prefix="minifold_batch_"))
@@ -126,7 +128,15 @@ class MiniFoldOracle(OracleMetric):
             shutil.rmtree(batch_dir, ignore_errors=True)
 
     def _build_command(self, fasta: Path, out_dir: Path) -> list[str]:
-        cmd = [self.python, str(self.predict_script), str(fasta), "--out_dir", str(out_dir), "--model_size", self.model_size]
+        cmd = [
+            self.python,
+            str(self.predict_script),
+            str(fasta),
+            "--out_dir",
+            str(out_dir),
+            "--model_size",
+            self.model_size,
+        ]
         if self.cache_dir:
             cmd += ["--cache", str(self.cache_dir)]
         if self.token_per_batch is not None:
@@ -141,7 +151,13 @@ class MiniFoldOracle(OracleMetric):
             env.pop(var, None)
         env.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, env=env, timeout=self.timeout_s, cwd=self.predict_script.parent, check=False
+            cmd,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=self.timeout_s,
+            cwd=self.predict_script.parent,
+            check=False,
         )
         # predict.py swallows per-batch exceptions and exits 0, so surface them here.
         if proc.returncode != 0 or "Failed to predict batch" in proc.stdout:

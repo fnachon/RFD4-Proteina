@@ -19,6 +19,7 @@ Selected automatically on MPS under ``torch.no_grad()`` with fp32 inputs; ``RFP_
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -120,14 +121,14 @@ kernel void tm_gate_mul(
 _lib = None
 
 
-def _library():
+def _library() -> Any:
     global _lib
     if _lib is None:
         _lib = torch.mps.compile_shader(_SOURCE)
     return _lib
 
 
-def enabled_for(z: torch.Tensor, c_z: int, c_hidden: int) -> bool:  # noqa: ARG001 (c_z: any width works)
+def enabled_for(z: torch.Tensor, c_z: int, c_hidden: int) -> bool:
     """True when the fused path applies: MPS, fp32, no autograd, channel sizes the kernels support."""
     return (
         os.environ.get("RFP_MPS_TRIMUL", "1") != "0"
@@ -141,7 +142,7 @@ def enabled_for(z: torch.Tensor, c_z: int, c_hidden: int) -> bool:  # noqa: ARG0
     )
 
 
-def tri_mult_metal(module, z: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+def tri_mult_metal(module: torch.nn.Module, z: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """Forward of a ``TriangleMultiplicativeUpdate`` using the fused kernels. ``mask``: ``[B, L, L]``."""
     lib = _library()
     B, L = z.shape[:2]
@@ -149,10 +150,14 @@ def tri_mult_metal(module, z: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     outgoing = module._direction == "outgoing"
     mask = mask.to(z.dtype).reshape(B, LL).contiguous()
 
-    w_in = torch.cat([module.linear_a_p.weight, module.linear_b_p.weight, module.linear_a_g.weight, module.linear_b_g.weight])
+    w_in = torch.cat(
+        [module.linear_a_p.weight, module.linear_b_p.weight, module.linear_a_g.weight, module.linear_b_g.weight]
+    )
     b_in = None
     if module.linear_a_p.bias is not None:
-        b_in = torch.cat([module.linear_a_p.bias, module.linear_b_p.bias, module.linear_a_g.bias, module.linear_b_g.bias])
+        b_in = torch.cat(
+            [module.linear_a_p.bias, module.linear_b_p.bias, module.linear_a_g.bias, module.linear_b_g.bias]
+        )
     ln_w = module.layer_norm_out.weight
     ln_b = module.layer_norm_out.bias if module.layer_norm_out.bias is not None else torch.zeros_like(ln_w)
 
@@ -171,7 +176,9 @@ def tri_mult_metal(module, z: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         prod = prod.contiguous().view(H, LL)
         Xn = torch.empty(LL, H, device=z.device, dtype=z.dtype)
         n_groups = (LL + 15) // 16
-        lib.tm_ln_out(prod, ln_w, ln_b, Xn, LL, H, float(module.layer_norm_out.eps), threads=(n_groups * 256,), group_size=(256,))
+        lib.tm_ln_out(
+            prod, ln_w, ln_b, Xn, LL, H, float(module.layer_norm_out.eps), threads=(n_groups * 256,), group_size=(256,)
+        )
         del prod
         X = module.linear_z(Xn)  # [LL, c_z]
         del Xn

@@ -44,6 +44,7 @@ from alphafold3.model import features, model, params, post_processing
 from alphafold3.model.components import utils
 from jax import numpy as jnp
 
+
 # CUDA-only workaround from RFD4-Proteina: pin tokamax GLU/layer-norm to XLA on Ampere/Ada GPUs.
 # On Apple MPS the fork's backend_ops bypasses tokamax entirely, so this is skipped there.
 def _pin_tokamax_to_xla() -> None:

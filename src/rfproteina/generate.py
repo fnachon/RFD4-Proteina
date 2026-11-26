@@ -42,10 +42,10 @@ with (
     from rfproteina.nn.execution import configure_bioir, configure_native, inference_backend
     from rfproteina.nn.local_latents_transformer import LocalLatentsTransformer
     from rfproteina.proteina import Proteina
-    from rfproteina.utils.device import accelerator_name, resolve_accelerator, resolve_precision
     from rfproteina.search.base_strategy import SearchStrategy
     from rfproteina.search.beam_search import BeamSearchStrategy
     from rfproteina.utils.ddp import RankedLogger
+    from rfproteina.utils.device import accelerator_name, resolve_accelerator, resolve_precision
     from rfproteina.utils.env import load_dotenv
     from rfproteina.utils.hydra import training_path_length_search_cutoffs
     from rfproteina.utils.logging import print_config_tree
@@ -723,7 +723,8 @@ def run_generation(
 
     trainer = L.Trainer(
         accelerator={"cuda": "gpu"}.get(accelerator, accelerator),
-        devices=cfg.hardware.ngpus_per_node_ if accelerator == "cuda" else 1,  # This is number of gpus per node, not total
+        # ngpus_per_node_ is the number of gpus per node, not total; MPS and the CPU use one device.
+        devices=cfg.hardware.ngpus_per_node_ if accelerator == "cuda" else 1,
         num_nodes=cfg.hardware.nnodes_,
         default_root_dir=cfg.out_dir,
         logger=False,

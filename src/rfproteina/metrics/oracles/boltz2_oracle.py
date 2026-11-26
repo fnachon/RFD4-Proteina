@@ -25,6 +25,7 @@ from atomworks.io.config import ParseConfig
 from atomworks.io.parser import parse
 from atomworks.io.utils.atom_array_plus import as_atom_array_plus
 from atomworks.io.utils.io_utils import to_cif_file
+from biotite.structure import AtomArray
 
 from rfproteina.metrics.oracles.oracle_inputs import ChainEntity, MSAMode, chain_entities, resolve_chain_msas
 from rfproteina.metrics.oracles.oracle_metric import OracleJobInput, OracleMetric, extract_confidence_metrics
@@ -104,7 +105,9 @@ class Boltz2Oracle(OracleMetric):
 
         names = [self.manifest_job_name(j) for j in pending]
         if len(set(names)) != len(names):
-            raise ValueError(f"Boltz2Oracle: duplicate job names in one batch: {sorted({n for n in names if names.count(n) > 1})}")
+            raise ValueError(
+                f"Boltz2Oracle: duplicate job names in one batch: {sorted({n for n in names if names.count(n) > 1})}"
+            )
 
         entities = [chain_entities(j.atom_array) for j in pending]
         if self.msa_mode != "none" and self.msa_builder is None:
@@ -117,7 +120,9 @@ class Boltz2Oracle(OracleMetric):
         out_root.mkdir()
         try:
             for name, ents, chain_msas in zip(names, entities, msas, strict=True):
-                (in_dir / f"{name}.yaml").write_text(yaml.safe_dump(self._build_input(ents, chain_msas), sort_keys=False))
+                (in_dir / f"{name}.yaml").write_text(
+                    yaml.safe_dump(self._build_input(ents, chain_msas), sort_keys=False)
+                )
             self._run_boltz(in_dir, out_root)
 
             n_ok = 0
@@ -146,7 +151,15 @@ class Boltz2Oracle(OracleMetric):
         return {"version": 1, "sequences": sequences}
 
     def _build_command(self, in_dir: Path, out_dir: Path) -> list[str]:
-        cmd = [self.boltz_executable, "predict", str(in_dir), "--out_dir", str(out_dir), "--accelerator", self.accelerator]
+        cmd = [
+            self.boltz_executable,
+            "predict",
+            str(in_dir),
+            "--out_dir",
+            str(out_dir),
+            "--accelerator",
+            self.accelerator,
+        ]
         for flag, value in (
             ("--recycling_steps", self.recycling_steps),
             ("--sampling_steps", self.sampling_steps),
@@ -182,7 +195,7 @@ class Boltz2Oracle(OracleMetric):
         return hits[0] if hits else None
 
     @staticmethod
-    def _tokens_per_chain(entities: list[ChainEntity], atom_array) -> list[int]:
+    def _tokens_per_chain(entities: list[ChainEntity], atom_array: AtomArray) -> list[int]:
         """Boltz tokenises polymers per residue and CCD ligands per heavy atom."""
         counts = []
         for e in entities:
@@ -198,11 +211,13 @@ class Boltz2Oracle(OracleMetric):
         conf_path = pred_dir / f"confidence_{name}_model_0.json" if pred_dir else None
         model_path = pred_dir / f"{name}_model_0.cif" if pred_dir else None
         if not (conf_path and conf_path.exists() and model_path.exists()):
-            raise RuntimeError(f"Boltz-2 produced no outputs for {job.example_id!r} under {out_root}; check boltz stderr.")
+            raise RuntimeError(
+                f"Boltz-2 produced no outputs for {job.example_id!r} under {out_root}; check boltz stderr."
+            )
         raw = json.loads(conf_path.read_text())
         n = len(entities)
 
-        def matrix(key: str):
+        def matrix(key: str) -> list[list[Any]] | None:
             d = raw.get(key)
             return None if d is None else [[d.get(str(i), {}).get(str(j)) for j in range(n)] for i in range(n)]
 

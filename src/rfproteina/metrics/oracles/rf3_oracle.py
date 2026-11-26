@@ -105,7 +105,9 @@ class RF3Oracle(OracleMetric):
 
         names = [self.manifest_job_name(j) for j in pending]
         if len(set(names)) != len(names):
-            raise ValueError(f"RF3Oracle: duplicate job names in one batch: {sorted(n for n in names if names.count(n) > 1)}")
+            raise ValueError(
+                f"RF3Oracle: duplicate job names in one batch: {sorted(n for n in names if names.count(n) > 1)}"
+            )
 
         if self.msa_mode != "none" and self.msa_builder is None:
             self.msa_builder = MMseqsMSABuilder()

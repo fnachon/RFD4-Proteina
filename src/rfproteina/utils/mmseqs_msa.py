@@ -75,7 +75,9 @@ class MMseqsMSABuilder:
             [self.mmseqs_bin, *args], capture_output=True, text=True, timeout=self.timeout_s, check=False
         )
         if proc.returncode != 0:
-            raise RuntimeError(f"mmseqs {args[0]} failed (exit {proc.returncode}):\n{(proc.stdout + proc.stderr)[-3000:]}")
+            raise RuntimeError(
+                f"mmseqs {args[0]} failed (exit {proc.returncode}):\n{(proc.stdout + proc.stderr)[-3000:]}"
+            )
 
     def _search(self, sequences: list[str], paths: dict[str, Path]) -> None:
         work = Path(tempfile.mkdtemp(prefix="rfp_mmseqs_"))
@@ -98,7 +100,19 @@ class MMseqsMSABuilder:
                  "--msa-format-mode", "5", "-v", "1", *thr]
             )  # fmt: skip
             out = work / "a3m"
-            self._run(["unpackdb", str(work / "msa"), str(out), "--unpack-suffix", ".a3m", "--unpack-name-mode", "1", "-v", "1"])
+            self._run(
+                [
+                    "unpackdb",
+                    str(work / "msa"),
+                    str(out),
+                    "--unpack-suffix",
+                    ".a3m",
+                    "--unpack-name-mode",
+                    "1",
+                    "-v",
+                    "1",
+                ]
+            )
 
             for i, seq in enumerate(sequences):
                 src = out / f"{i}.a3m"

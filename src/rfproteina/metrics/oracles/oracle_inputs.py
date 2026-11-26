@@ -54,7 +54,9 @@ def chain_entities(atom_array: AtomArray) -> list[ChainEntity]:
         chain = atom_array[atom_array.chain_id == chain_id]
         iid = str(chain.chain_iid[0]) if "chain_iid" in chain.get_annotation_categories() else chain_id
         # residues in order, one entry per (res_id, ins_code)
-        keys = list(dict.fromkeys(zip(chain.res_id.tolist(), chain.ins_code.tolist(), chain.res_name.tolist(), strict=True)))
+        keys = list(
+            dict.fromkeys(zip(chain.res_id.tolist(), chain.ins_code.tolist(), chain.res_name.tolist(), strict=True))
+        )
         names = [k[2] for k in keys if k[2] not in _SKIP_RESIDUES]
         if not names:
             continue
@@ -101,7 +103,9 @@ def resolve_chain_msas(
             wanted.append((ji, e.chain_id, e.sequence))
     if wanted:
         if builder is None:
-            raise ValueError(f"msa_mode={mode!r} needs an MMseqs2 builder (set MMSEQS_BIN/MMSEQS_DB or pass msa_builder).")
+            raise ValueError(
+                f"msa_mode={mode!r} needs an MMseqs2 builder (set MMSEQS_BIN/MMSEQS_DB or pass msa_builder)."
+            )
         paths = builder.build(seq for _, _, seq in wanted)
         for ji, chain_id, seq in wanted:
             result[ji][chain_id] = paths[seq]

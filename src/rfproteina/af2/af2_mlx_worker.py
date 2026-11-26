@@ -30,7 +30,7 @@ import numpy as np
 _MODELS: dict[tuple, object] = {}
 
 
-def _get_model(kind: str, multimer: bool, params_dir: str, num_recycles: int):
+def _get_model(kind: str, multimer: bool, params_dir: str, num_recycles: int) -> object:
     from colabdesign import mk_afdesign_model
 
     key = (kind, multimer, params_dir, num_recycles)
@@ -44,7 +44,7 @@ def _get_model(kind: str, multimer: bool, params_dir: str, num_recycles: int):
     return _MODELS[key]
 
 
-def _scalar(x):
+def _scalar(x: object) -> float | None:
     return None if x is None else float(np.asarray(x))
 
 
@@ -74,9 +74,17 @@ def run_job(job: dict) -> dict:
 
     model.save_pdb(str(out_dir / f"{name}.pdb"))
     aux = model.aux
-    np.savez(out_dir / f"{name}.npz", plddt=np.asarray(aux["plddt"], dtype=np.float32), pae=np.asarray(aux["pae"], dtype=np.float32))
+    np.savez(
+        out_dir / f"{name}.npz",
+        plddt=np.asarray(aux["plddt"], dtype=np.float32),
+        pae=np.asarray(aux["pae"], dtype=np.float32),
+    )
     log = aux["log"]
-    result = {"ptm": _scalar(log.get("ptm")), "model_name": model_name, "n_residues": int(np.asarray(aux["plddt"]).shape[0])}
+    result = {
+        "ptm": _scalar(log.get("ptm")),
+        "model_name": model_name,
+        "n_residues": int(np.asarray(aux["plddt"]).shape[0]),
+    }
     if kind == "binder":
         result["i_ptm"] = _scalar(log.get("i_ptm"))
         for key in ("min_ipsae", "max_ipsae", "avg_ipsae"):

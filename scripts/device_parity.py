@@ -20,8 +20,9 @@ import glob
 import os
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-
+from typing import Any
 
 _TOKEN_CAP = 2048  # token-axis length used for padding-independent draws
 
@@ -40,10 +41,10 @@ def _child(device: str, seed: int, hydra_args: list[str], tokenwise: bool = Fals
     orig_randn = torch.randn
     log_shapes = bool(os.environ.get("RFP_PARITY_LOG_SHAPES"))
 
-    def _split_size(size):
-        return tuple(size[0]) if len(size) == 1 and isinstance(size[0], (tuple, list, torch.Size)) else tuple(size)
+    def _split_size(size: tuple) -> tuple:
+        return tuple(size[0]) if len(size) == 1 and isinstance(size[0], tuple | list | torch.Size) else tuple(size)
 
-    def _draw(shape, dtype):
+    def _draw(shape: Sequence[int], dtype: Any) -> Any:
         if log_shapes:
             print(f"[parity-randn] {tuple(shape)}", flush=True)
         if tokenwise and len(shape) >= 3 and shape[-2] <= _TOKEN_CAP:
@@ -51,11 +52,11 @@ def _child(device: str, seed: int, hydra_args: list[str], tokenwise: bool = Fals
             return full[..., : shape[-2], :].contiguous()
         return orig_randn(*shape, generator=gen, dtype=dtype)
 
-    def randn(*size, generator=None, dtype=None, device=None, **kwargs):
+    def randn(*size: Any, generator: Any = None, dtype: Any = None, device: Any = None, **kwargs: Any) -> Any:
         out = _draw(_split_size(size), dtype)
         return out.to(device=device) if device is not None else out
 
-    def randn_like(x, *, dtype=None, **kwargs):
+    def randn_like(x: Any, *, dtype: Any = None, **kwargs: Any) -> Any:
         return _draw(tuple(x.shape), dtype or x.dtype).to(x.device)
 
     torch.randn, torch.randn_like = randn, randn_like
@@ -68,10 +69,10 @@ def _child(device: str, seed: int, hydra_args: list[str], tokenwise: bool = Fals
 
 def _compare(path_a: str, path_b: str) -> dict:
     import numpy as np
-    from biotite.structure import rmsd, superimpose
     from atomworks.io.parser import parse
+    from biotite.structure import rmsd, superimpose
 
-    def ca_array(p):
+    def ca_array(p: str) -> Any:
         arr = parse(p)["asym_unit"][0]
         ca = arr[arr.atom_name == "CA"]
         return ca[~np.isnan(ca.coord).any(axis=-1)]

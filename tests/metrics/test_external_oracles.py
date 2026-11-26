@@ -57,7 +57,9 @@ def test_msa_modes(complex_array):
 
 def test_provided_msas_win(complex_array):
     ents = chain_entities(complex_array)
-    job = OracleJobInput(atom_array=complex_array, example_id="d", out_dir=Path("."), msa_paths_by_chain_id={"B": "/mine.a3m"})
+    job = OracleJobInput(
+        atom_array=complex_array, example_id="d", out_dir=Path("."), msa_paths_by_chain_id={"B": "/mine.a3m"}
+    )
     fake = _FakeBuilder()
     out = resolve_chain_msas([job], [ents], fake, "all")[0]
     assert out["B"] == Path("/mine.a3m") and fake.seen == ["AG"]
@@ -133,7 +135,12 @@ def test_af2_mlx_plan(complex_array):
     from rfproteina.metrics.oracles.af2_mlx_oracle import AF2MLXOracle
 
     o = AF2MLXOracle(python="/x/python", params_dir="/p")
-    job = OracleJobInput(atom_array=complex_array[complex_array.chain_id != "L"], example_id="d", out_dir=Path("."), chain_of_interest="B")
+    job = OracleJobInput(
+        atom_array=complex_array[complex_array.chain_id != "L"],
+        example_id="d",
+        out_dir=Path("."),
+        chain_of_interest="B",
+    )
     ents, binder = o._plan(job)
     assert [e.chain_id for e in ents] == ["A", "B"] and binder.chain_id == "B"
     with pytest.raises(ValueError, match="not protein"):  # the ATP ligand chain

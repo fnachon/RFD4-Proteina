@@ -31,6 +31,7 @@ from atomworks.io.config import ParseConfig
 from atomworks.io.parser import parse
 from atomworks.io.utils.atom_array_plus import as_atom_array_plus
 from atomworks.io.utils.io_utils import to_cif_file
+from biotite.structure import AtomArray
 
 from rfproteina.metrics.oracles.oracle_inputs import ChainEntity, chain_entities
 from rfproteina.metrics.oracles.oracle_metric import OracleJobInput, OracleMetric, extract_confidence_metrics
@@ -123,7 +124,9 @@ class AF2MLXOracle(OracleMetric):
 
         names = [self.manifest_job_name(j) for j in pending]
         if len(set(names)) != len(names):
-            raise ValueError(f"AF2MLXOracle: duplicate job names in one batch: {sorted({n for n in names if names.count(n) > 1})}")
+            raise ValueError(
+                f"AF2MLXOracle: duplicate job names in one batch: {sorted({n for n in names if names.count(n) > 1})}"
+            )
         plans = [self._plan(j) for j in pending]
 
         batch_dir = Path(tempfile.mkdtemp(prefix="af2mlx_batch_"))
@@ -148,7 +151,15 @@ class AF2MLXOracle(OracleMetric):
     # Input / worker
     # ------------------------------------------------------------------
 
-    def _manifest_entry(self, job, name, entities, binder, batch_dir: Path, out_root: Path) -> dict:
+    def _manifest_entry(
+        self,
+        job: OracleJobInput,
+        name: str,
+        entities: list[ChainEntity],
+        binder: ChainEntity | None,
+        batch_dir: Path,
+        out_root: Path,
+    ) -> dict:
         entry = {
             "name": name,
             "params_dir": str(self.params_dir),
@@ -175,7 +186,7 @@ class AF2MLXOracle(OracleMetric):
         return entry
 
     @staticmethod
-    def _write_target_pdb(atom_array, targets: list[ChainEntity], letters: str, path: Path) -> None:
+    def _write_target_pdb(atom_array: AtomArray, targets: list[ChainEntity], letters: str, path: Path) -> None:
         """Write the target chains (protein atoms with finite coordinates) as a PDB with one-letter chain ids."""
         parts = []
         for e, letter in zip(targets, letters, strict=True):
@@ -202,13 +213,17 @@ class AF2MLXOracle(OracleMetric):
             if expected and all(p.exists() and "error" not in json.loads(p.read_text()) for p in expected):
                 logger.warning(f"AF2 worker exited with {proc.returncode} after writing all results; using them.")
             else:
-                raise RuntimeError(f"AF2 worker failed (exit {proc.returncode}):\n{(proc.stdout + proc.stderr)[-3000:]}")
+                raise RuntimeError(
+                    f"AF2 worker failed (exit {proc.returncode}):\n{(proc.stdout + proc.stderr)[-3000:]}"
+                )
 
     # ------------------------------------------------------------------
     # Output parsing
     # ------------------------------------------------------------------
 
-    def _finalize(self, job, name, entities, binder, out_root: Path) -> dict:
+    def _finalize(
+        self, job: OracleJobInput, name: str, entities: list[ChainEntity], binder: ChainEntity | None, out_root: Path
+    ) -> dict:
         res_path = out_root / f"{name}.json"
         res = json.loads(res_path.read_text()) if res_path.exists() else {"error": "no result written"}
         if "error" in res:
@@ -220,7 +235,9 @@ class AF2MLXOracle(OracleMetric):
         order = [e for e in entities if e is not binder] + ([binder] if binder is not None else [])
         bounds = np.cumsum([0, *[len(e.sequence) for e in order]])
         if plddt.shape[0] != bounds[-1] or pae.shape != (bounds[-1], bounds[-1]):
-            raise RuntimeError(f"AF2 output size {plddt.shape} != expected {bounds[-1]} residues for {job.example_id!r}")
+            raise RuntimeError(
+                f"AF2 output size {plddt.shape} != expected {bounds[-1]} residues for {job.example_id!r}"
+            )
         sl = {e.chain_id: slice(bounds[i], bounds[i + 1]) for i, e in enumerate(order)}
 
         n = len(entities)

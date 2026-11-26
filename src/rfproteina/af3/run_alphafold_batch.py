@@ -29,7 +29,7 @@ import time
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # sibling import under PYTHONSAFEPATH=1
-import af3_runtime as _runtime  # noqa: E402
+import af3_runtime as _runtime
 import jax
 from absl import app, flags
 from alphafold3.constants import chemical_components
@@ -219,29 +219,29 @@ def _run(
         t.start()
         get = q.get
     else:  # sequential reference path: featurise then fold, one design at a time
-        import collections
-
-        pending = collections.deque()
         gen = iter(range(len(designs)))
-        q_local: queue.Queue = queue.Queue()
 
-        def get():
-            if q_local.empty():
-                try:
-                    i = next(gen)
-                except StopIteration:
-                    return ("done",)
-                one = designs[i]
-                try:
-                    t_feat = time.perf_counter()
-                    fold_input = _build_fold_input(one)
-                    feats = _featurise(fold_input, max_template_date, _CONFORMER_MAX_ITERATIONS.value,
-                                       _RESOLVE_MSA_OVERLAPS.value, of3_weights=of3_weights)
-                    one["_t_featurise_s"] = time.perf_counter() - t_feat
-                    return ("ok", i, one, fold_input, feats)
-                except Exception as exc:
-                    return ("err", i, one, exc)
-            return q_local.get()
+        def get() -> tuple:
+            try:
+                i = next(gen)
+            except StopIteration:
+                return ("done",)
+            one = designs[i]
+            try:
+                t_feat = time.perf_counter()
+                fold_input = _build_fold_input(one)
+                feats = _featurise(
+                    fold_input,
+                    max_template_date,
+                    _CONFORMER_MAX_ITERATIONS.value,
+                    _RESOLVE_MSA_OVERLAPS.value,
+                    of3_weights=of3_weights,
+                )
+                one["_t_featurise_s"] = time.perf_counter() - t_feat
+                return ("ok", i, one, fold_input, feats)
+            except Exception as exc:
+                return ("err", i, one, exc)
+
         t = None
 
     n_ok = 0
@@ -271,12 +271,16 @@ def _run(
                 save_full_outputs=save_full,
             )
             t_end = time.perf_counter()
-            _log_timing({
-                "name": payload["name"], "padded_tokens": int(feats[0]["aatype"].shape[-1]),
-                "featurise_s": round(payload.get("_t_featurise_s", float("nan")), 3),
-                "wait_for_features_s": round(wait_s, 3),
-                "inference_s": round(t_write - t_inf, 3), "write_s": round(t_end - t_write, 3),
-            })
+            _log_timing(
+                {
+                    "name": payload["name"],
+                    "padded_tokens": int(feats[0]["aatype"].shape[-1]),
+                    "featurise_s": round(payload.get("_t_featurise_s", float("nan")), 3),
+                    "wait_for_features_s": round(wait_s, 3),
+                    "inference_s": round(t_write - t_inf, 3),
+                    "write_s": round(t_end - t_write, 3),
+                }
+            )
             print(
                 f"Batch wrapper: ({i + 1}/{len(designs)}) {payload['name']} OK",
                 file=sys.stderr,

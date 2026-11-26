@@ -13,7 +13,9 @@ from rfproteina.nn.modules.openfold_modules.triangular_multiplicative_update imp
 
 
 @pytest.mark.parametrize("cls", [TriangleMultiplicationOutgoing, TriangleMultiplicationIncoming])
-@pytest.mark.parametrize(("batch", "n", "c_z", "c"), [(1, 37, 64, 64), (2, 100, 256, 256), (1, 16, 32, 32), (1, 45, 384, 256)])
+@pytest.mark.parametrize(
+    ("batch", "n", "c_z", "c"), [(1, 37, 64, 64), (2, 100, 256, 256), (1, 16, 32, 32), (1, 45, 384, 256)]
+)
 def test_metal_matches_torch(cls, batch, n, c_z, c):
     torch.manual_seed(0)
     module = cls(c_z, c, bias=True, backend="torch").to("mps").eval()

@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # sibling import under PYTHONSAFEPATH=1
-from af3_apptainer import (  # noqa: E402
+from af3_apptainer import (
     AF3_NUM_RECYCLES,
     AF3_RUNTIME,
     build_apptainer_fold_command,
