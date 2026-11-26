@@ -1,7 +1,7 @@
 # Running on Apple Silicon (MPS)
 
 RFD4-Proteina runs on Apple Silicon through PyTorch's MPS backend. This is an inference path: generation works; training and the BioIR backend are untested on MPS. It is slower than a CUDA GPU and needs
-unified memory (about 16 GB for ~550 tokens at batch size 1).
+unified memory (about 15 GB for ~550 tokens at batch size 1).
 
 ## Install
 
@@ -21,11 +21,11 @@ exists rather than running on the CPU. `auto` falls back to the CPU, and `cpu`, 
 | Area | On MPS |
 |---|---|
 | Precision | `bf16-mixed` runs as `32-true` (`RFP_MPS_ALLOW_BF16=1` keeps bf16). |
-| cuEquivariance | Not available. Attention uses `scaled_dot_product_attention`; triangle multiplication uses the plain PyTorch path. |
+| cuEquivariance | Not available. Attention uses `scaled_dot_product_attention`; triangle multiplication uses fused Metal kernels (`rfproteina/nn/modules/metal_trimul.py`, disable with `RFP_MPS_TRIMUL=0`). |
 | `torch.compile` | Used up to 512 tokens. Longer inputs run eagerly and pad to a multiple of 16 instead of the next bucket (`RFP_MPS_EAGER_ABOVE=<tokens>`, `-1` never forces eager). |
 | Unsupported ops | `PYTORCH_ENABLE_MPS_FALLBACK=1` is set so they run on the CPU. |
 
-Measured on one machine, 38_TNFalpha (556 tokens), `medium/front_loaded`, batch size 1: about 440 s and 16 GB.
+Measured on one machine, 38_TNFalpha (556 tokens), `medium/front_loaded`, batch size 1: about 400 s and 14-16 GB.
 Run-to-run timing varies by roughly 10%.
 
 ## Check a result against the CPU
