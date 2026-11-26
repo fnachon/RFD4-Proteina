@@ -54,7 +54,8 @@ _JAX_COMPILATION_CACHE_DIR = flags.DEFINE_string(
     "Persistent JAX compilation cache directory.",
 )
 _GPU_DEVICE = flags.DEFINE_integer("gpu_device", 0, "Visible JAX device index.")
-_JAX_BACKEND = flags.DEFINE_enum("jax_backend", "mps", ["mps", "gpu", "cpu"], "JAX backend (mps on Apple Silicon).")
+# The Apptainer command does not pass --jax_backend, so the default must stay "gpu"; the native command passes it.
+_JAX_BACKEND = flags.DEFINE_enum("jax_backend", "gpu", ["gpu", "mps", "cpu"], "JAX backend (mps on Apple Silicon).")
 _PREFETCH = flags.DEFINE_bool("prefetch", True, "Featurise design N+1 on a thread while N runs inference.")
 _TIMING_LOG = flags.DEFINE_string("timing_log", None, "Optional JSONL file receiving per-design stage timings.")
 _BUCKETS = flags.DEFINE_list(
@@ -302,10 +303,11 @@ def _setup_runner() -> tuple[Any, datetime.date, bool]:
     t_setup = time.perf_counter()
     devices = jax.local_devices(backend=_JAX_BACKEND.value)
     gpu_device = _GPU_DEVICE.value
-    # backend_ops (MPS) and tokamax both read the default device at trace time.
-    jax.config.update("jax_default_device", devices[gpu_device])
     if _JAX_BACKEND.value == "gpu":
         _runtime._pin_tokamax_to_xla()
+    else:
+        # backend_ops (MPS) and tokamax both read the default device at trace time.
+        jax.config.update("jax_default_device", devices[gpu_device])
     model_dir = _MODEL_DIR.value or os.environ.get("AF3_MODEL_DIR")
     if model_dir is None:
         raise ValueError("--model_dir or AF3_MODEL_DIR is required")
