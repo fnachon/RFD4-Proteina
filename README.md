@@ -25,7 +25,7 @@
 
 <p align="center">
   <a href="https://rfd4-proteina.org/">Project page</a> ·
-  <a href="website/assets/paper/RFD4-Proteina.pdf">Paper</a> ·
+  <a href="https://www.biorxiv.org/content/10.64898/2026.11.12.766037v1">Paper</a> ·
   <a href="#try-it-now">Try it now</a> ·
   <a href="#system-requirements">Requirements</a> ·
   <a href="#install">Installation</a> ·
@@ -141,6 +141,8 @@ The model can also be run as a Hugging Face Diffusers pipeline. The [quickstart]
 The CUDA extra also installs the fused cuEquivariance kernels the model loads, so use it even if you skip metrics. Add `inference_backend=bioir` to use the BioIR runtime (included in `all-cuda13`). `all-cuda12` and the plain package
 use the native runtime. If `pip` cannot see a very recent release, retry with `--no-cache-dir`.
 
+For the single-worker Docker/Kubernetes API, see the [deployment guide](deploy/README.md).
+
 ## Run the model
 
 After setup, describe a design in a small YAML [condition spec](https://rfd4-proteina.org/latest/how-to/input_prep/yaml-json.html).
@@ -222,15 +224,16 @@ Training datasets are separate from model downloads: see the
 ## Citation
 
 If you use RFD4-Proteina in your research, please cite
-[*Biomolecular design through latent reasoning with RFD4-Proteina*](website/assets/paper/RFD4-Proteina.pdf):
+[*Biomolecular design through latent reasoning with RFD4-Proteina*](https://www.biorxiv.org/content/10.64898/2026.11.12.766037v1):
 
 ```bibtex
 @article{corley2026rfd4proteina,
   title        = {Biomolecular design through latent reasoning with {RFD4-Proteina}},
   author       = {Corley, Nathaniel and Didi, Kieran and Kazman, Maxwell W. and Brent, Rafael I. and others},
   year         = {2026},
-  note         = {Preprint},
-  url          = {https://rfd4-proteina.org/assets/paper/RFD4-Proteina.pdf}
+  journal      = {bioRxiv},
+  doi          = {10.64898/2026.11.12.766037},
+  url          = {https://www.biorxiv.org/content/10.64898/2026.11.12.766037v1}
 }
 ```
 
