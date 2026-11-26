@@ -8,6 +8,7 @@
 #
 # This file adapts AlphaFold3's Apache-licensed inference entrypoint for
 # RFProteina's persistent manifest worker.
+# Mac port: MPS device, tokamax workarounds limited to CUDA, OF3 flag optional.
 """Checked-in AlphaFold3 package adapter for the persistent fold worker.
 
 This module owns the CIF-to-input, model-runner, and output-writing behavior
@@ -43,21 +44,18 @@ from alphafold3.model import features, model, params, post_processing
 from alphafold3.model.components import utils
 from jax import numpy as jnp
 
-# Pin tokamax's GLU/layer-norm ops to XLA: their default Triton/Pallas kernels over-request shared memory on
-# the Ampere/Ada GPUs here and fail at *runtime*, past tokamax's trace-time XLA fallback (autotuning, which
-# would pick a fitting block, is broken in this container). Private internals, so warn if a bump moves them.
-try:
-    import tokamax._src.ops.gated_linear_unit.api as _tokamax_glu_api
-    import tokamax._src.ops.normalization.api as _tokamax_ln_api
 
-    _tokamax_glu_api._DEFAULT_IMPLEMENTATION = ("xla",)
-    _tokamax_ln_api._DEFAULT_IMPLEMENTATION = ("xla",)
-except (ImportError, AttributeError) as e:
-    logging.warning(
-        "Could not pin tokamax GLU/layer-norm to XLA (%s); folds on GPUs with <108 KB shared "
-        "memory per block may fail with RESOURCE_EXHAUSTED.",
-        e,
-    )
+# CUDA-only workaround from RFD4-Proteina: pin tokamax GLU/layer-norm to XLA on Ampere/Ada GPUs.
+# On Apple MPS the fork's backend_ops bypasses tokamax entirely, so this is skipped there.
+def _pin_tokamax_to_xla() -> None:
+    try:
+        import tokamax._src.ops.gated_linear_unit.api as _tokamax_glu_api
+        import tokamax._src.ops.normalization.api as _tokamax_ln_api
+
+        _tokamax_glu_api._DEFAULT_IMPLEMENTATION = ("xla",)
+        _tokamax_ln_api._DEFAULT_IMPLEMENTATION = ("xla",)
+    except (ImportError, AttributeError) as e:
+        logging.warning("Could not pin tokamax GLU/layer-norm to XLA (%s).", e)
 
 
 def make_model_config(
@@ -74,8 +72,14 @@ def make_model_config(
     """
     config = model.Model.Config()
     config.global_config.flash_attention_implementation = flash_attention_implementation
-    # Only on the OF3 path: images predating the fork have no such field.
+    # Only on the OF3 path: builds without OpenFold3 support (stock google-deepmind/alphafold3) have no such field.
     if of3_weights:
+        if not hasattr(config.global_config, "of3_weights"):
+            raise ValueError(
+                "This alphafold3 build has no OpenFold3 branches, so it cannot run converted OpenFold3 weights. "
+                "Use a build whose featurise_input accepts of3_weights, such as kierandidi/alphafold3 "
+                "(the alphafold3-open package)."
+            )
         config.global_config.of3_weights = True
     config.heads.diffusion.eval.num_samples = num_diffusion_samples
     config.num_recycles = num_recycles
@@ -134,7 +138,7 @@ class ModelRunner:
             jax.tree_util.tree_map(jnp.asarray, utils.remove_invalidly_typed_feats(featurised_example)),
             self._device,
         )
-        if not self._autotune_attempted and self._autotune_cache_path is not None:
+        if not self._autotune_attempted and self._autotune_cache_path is not None and self._device.platform != "mps":
             self._autotune_attempted = True
             try:
                 self._autotune_result = tokamax.autotune(self._model, rng_key, featurised_example)

@@ -42,9 +42,74 @@ It runs both devices with identical CPU-drawn noise and compares the superimpose
 
 ## Refolding oracles
 
+### AF3 (native, MPS)
+
+The stock `af3` oracle runs natively on a Mac, in a separate AlphaFold 3 environment (`AF3_PYTHON`) whose
+`jax-mps` backend runs on the Apple GPU. With `AF3_IMAGE` unset on macOS (or `AF3_RUNTIME=native`) the worker is
+launched from that environment instead of `apptainer run`; everything else (warm daemon, manifest protocol,
+templates, metrics) is the upstream code path, so `metrics_tags` work as on CUDA. AlphaFold 3 weights are obtained
+from DeepMind under their terms of use.
+
+Builds this was run against, each with `jax` 0.10.2 and `jax-mps` 0.10.11 on Python 3.13 (AF3 needs 3.12 or newer):
+
+| AlphaFold 3 build | Notes |
+|---|---|
+| [`google-deepmind/alphafold3`](https://github.com/google-deepmind/alphafold3) v3.0.5 | Works as is. Logs tokamax `NotImplementedError` tracebacks, which AF3's known-issues page says are safe to ignore. |
+| [`kierandidi/alphafold3`](https://github.com/kierandidi/alphafold3) (`alphafold3-open` 3.0.5.post4) | Same results as stock. Its `featurise_input` accepts `of3_weights`, so it is the build to use for converted OpenFold3 weights (see the notes). |
+| An Apple Silicon fork with fused MLX attention (`fnachon/alphafold3`) | Optional. About 1.8x faster on a small fold (12 s against 22 s cold start, 76 residues) and without the tokamax messages. |
+
+On a protein-protein binder refold the three agree to 0.04 Å (the two non-fork builds to 0.001 Å).
+
+Both upstream builds pin `jax-mps==0.10.9`, which is too old (see the notes below), so install from source and
+raise the pin:
+
+```bash
+git clone --branch v3.0.5 https://github.com/google-deepmind/alphafold3.git && cd alphafold3
+uv venv --python 3.13 .venv
+uv pip install --python .venv/bin/python .
+uv pip install --python .venv/bin/python "jax-mps==0.10.11"
+.venv/bin/build_data
+```
+
+```bash
+export AF3_PYTHON=/path/to/alphafold3/.venv/bin/python
+export AF3_MODEL_DIR=/path/to/alphafold3/weights
+export AF3_JAX_CACHE_DIR=$HOME/.cache/rfd4_af3_jax   # required by the launcher; see note below
+# optional: AF3_JAX_BACKEND=mps|cpu (default mps), JAX_MPS_ASYNC_DISPATCH=1 (experimental)
+# optional: AF3_FOLD_TIMEOUT_PER_DESIGN_S=<seconds> (default 120 per design on the daemon, no limit on a direct fold)
+rfd4-generate inputs=... metrics_tags='[ppi_refolding]'
+```
+
+Notes:
+
+- Use `jax-mps` 0.10.11 or later in the AF3 environment. With 0.10.9 and 0.10.10, stock AlphaFold 3 silently
+  corrupts the MSA while shuffling it, so the builds above need the pin raised as shown.
+- jax-mps (checked with 0.10.9 and 0.10.11) does not store compiled executables, so the persistent compilation
+  cache does nothing on MPS and every new worker process recompiles each token bucket. Keep one process alive:
+  the oracle's warm daemon does this within a run; reuse it across runs with `af3_daemon.py launch`.
+- `AF3_RUNTIME` must be `apptainer` or `native`, and `AF3_JAX_BACKEND` `mps`, `cpu` or `gpu`; other values are rejected.
+- Folds slower than 2 minutes per design (large complexes) need `AF3_FOLD_TIMEOUT_PER_DESIGN_S`; the daemon's wait is
+  at least one hour either way.
+- tokamax autotuning and the GLU/layer-norm XLA pin are CUDA workarounds and are skipped on MPS.
+- OpenFold3 weights need a build whose `featurise_input` accepts `of3_weights`, which is the `kierandidi` build above.
+  Stock DeepMind stops with an error saying so. Point `AF3_MODEL_DIR` at the converted weights and select
+  `metrics/refolding_oracles=of3`; the worker picks the OpenFold3 code paths from the weights' provenance file. On a
+  Mac `scripts/download_assets.sh` skips them (it needs Apptainer), so fetch them directly:
+
+  ```bash
+  hf download nvidia/RFD4-Proteina openfold3/weights/of3_ported_weights.bin.zst \
+      openfold3/weights/of3_ported_weights.provenance.json \
+      --revision 598acab93d5d0aeacc4362f6e88dc20e7db85ef6 --local-dir <dir>
+  export AF3_MODEL_DIR=<dir>/openfold3/weights
+  ```
+
+  Checked on a Mac with `kierandidi`'s build: a 76-residue protein folds (pTM 0.65), and the PD1 binder runs end to end
+  through the `of3` oracle. Its refold differs from the AlphaFold 3 weights' (2.9 Å on that binder), as expected for a
+  different model. Larger inputs, MSAs, ligands and DNA were not run with these weights.
+
 ### Other oracles
 
-These oracles run on a Mac, each in its own environment and selected with
+These oracles also run on a Mac, each in its own environment and selected with
 `metrics/refolding_oracles=<name>`:
 
 | Oracle | Config | Environment variables |
@@ -80,7 +145,7 @@ None of them forwards templates, so pass rates are not comparable to AF3's. MSAs
 - AF2 on jax-mps can abort inside the native library when its process exits, after all results are written. The
   oracle accepts a non-zero exit only if every result file is present and none reports an error.
 - All four forward no templates, so refolds of template-conditioned tasks are not comparable to AF3's (use the
-  `af3` oracle when templates matter).
+  native `af3` oracle above when templates matter).
 
 ### Small-molecule binders (RF3 and Boltz-2)
 
