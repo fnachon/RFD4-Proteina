@@ -1,0 +1,13 @@
+# MiniFold refolding oracle (single chain, ESM-2 based, no MSA, no templates). Runs MiniFold's predict.py in its own
+# environment: set MINIFOLD_PREDICT, MINIFOLD_PYTHON and MINIFOLD_CACHE, or pass predict_script / python / cache_dir.
+#
+# It folds only the chain of interest, so the refold is a single-chain apo check and carries only pLDDT: no pTM, iPTM
+# or PAE keys exist, and pass criteria on them cannot be evaluated with this oracle.
+
+oracle:
+  _target_: rfproteina.metrics.oracles.minifold_oracle.MiniFoldOracle
+  oracle_name: minifold
+  aggregation: [median]
+  required_tags_any:
+    - minifold_refolding
+    - unconditional_refolding
