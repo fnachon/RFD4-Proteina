@@ -31,6 +31,20 @@ AF3_RUNTIME = os.environ.get("AF3_RUNTIME", "").strip().lower() or (
     "native" if sys.platform == "darwin" and not os.environ.get("AF3_IMAGE") else "apptainer"
 )
 
+_RUNTIMES = ("apptainer", "native")
+_NATIVE_BACKENDS = ("mps", "cpu", "gpu")
+
+
+def validate_runtime() -> str:
+    """Return the selected AF3 runtime, rejecting values other than ``apptainer`` and ``native``.
+
+    A mistyped ``AF3_RUNTIME`` would otherwise be treated as ``apptainer`` and fail later with an unrelated error.
+    """
+    if AF3_RUNTIME not in _RUNTIMES:
+        raise ValueError(f"AF3_RUNTIME must be one of {', '.join(_RUNTIMES)}, got {AF3_RUNTIME!r}")
+    return AF3_RUNTIME
+
+
 # Default location of the warm-worker entry script (sibling under scripts/).
 _DEFAULT_BATCH_SCRIPT = Path(__file__).resolve().parent / "run_alphafold_batch.py"
 
@@ -121,6 +135,7 @@ def build_apptainer_fold_command(
             subprocess loads AF3 once and reads manifest paths on stdin
             instead of folding a single ``--manifest`` argument and exiting.
     """
+    validate_runtime()
     jax_cache = _require("AF3_JAX_CACHE_DIR")
     weights = _require("AF3_MODEL_DIR")
     if batch_script is None:
@@ -128,7 +143,9 @@ def build_apptainer_fold_command(
     batch_path = Path(batch_script).resolve()
 
     if AF3_RUNTIME == "native":
-        backend = os.environ.get("AF3_JAX_BACKEND", "mps").strip().lower()
+        backend = os.environ.get("AF3_JAX_BACKEND", "").strip().lower() or "mps"
+        if backend not in _NATIVE_BACKENDS:
+            raise ValueError(f"AF3_JAX_BACKEND must be one of {', '.join(_NATIVE_BACKENDS)}, got {backend!r}")
         cmd = [
             "env",
             "XLA_PYTHON_CLIENT_PREALLOCATE=false",

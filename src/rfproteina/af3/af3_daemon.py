@@ -37,6 +37,7 @@ from af3_apptainer import (  # noqa: E402
     AF3_NUM_RECYCLES,
     AF3_RUNTIME,
     build_apptainer_fold_command,
+    validate_runtime,
 )
 
 # The native runtime (Apple Silicon) needs the AF3 venv interpreter instead of a container image.
@@ -133,6 +134,7 @@ def _safe_unlink(path: str) -> None:
 
 
 def _serve(args: argparse.Namespace) -> int:
+    validate_runtime()
     if args.skip_if_no_env and not all(os.environ.get(v) for v in _REQUIRED_ENV_VARS):
         print("[af3-daemon] AF3 env vars not set; not serving.", file=sys.stderr)
         return 0
@@ -352,6 +354,7 @@ def _spawn_one(rank: int, log_dir: Path, lazy_warmup: bool = False) -> subproces
 
 
 def _launch(args: argparse.Namespace) -> int:
+    validate_runtime()
     if args.skip_if_no_env and not all(os.environ.get(v) for v in _REQUIRED_ENV_VARS):
         print("[af3-daemons] AF3 env vars not set; skipping daemon launch.", file=sys.stderr)
         return 0

@@ -47,3 +47,26 @@ def test_native_worker_backend_is_explicit(monkeypatch, env, expected):
     cmd = af3_apptainer.build_apptainer_fold_command("/placeholder/manifest.json", 0, False)
     assert f"--jax_backend={expected}" in cmd
     assert "--flash_attention_implementation=xla" in cmd
+
+
+def test_mistyped_runtime_is_rejected(monkeypatch):
+    monkeypatch.setattr(af3_apptainer, "AF3_RUNTIME", "natve")
+    with pytest.raises(ValueError, match="AF3_RUNTIME"):
+        af3_apptainer.validate_runtime()
+    with pytest.raises(ValueError, match="AF3_RUNTIME"):
+        _command(monkeypatch, "natve")
+
+
+@pytest.mark.parametrize("runtime", ["apptainer", "native"])
+def test_known_runtimes_are_accepted(monkeypatch, runtime):
+    monkeypatch.setattr(af3_apptainer, "AF3_RUNTIME", runtime)
+    assert af3_apptainer.validate_runtime() == runtime
+
+
+def test_mistyped_native_backend_is_rejected(monkeypatch):
+    monkeypatch.setattr(af3_apptainer, "AF3_RUNTIME", "native")
+    for name in ("AF3_PYTHON", "AF3_JAX_CACHE_DIR", "AF3_MODEL_DIR"):
+        monkeypatch.setenv(name, f"/placeholder/{name}")
+    monkeypatch.setenv("AF3_JAX_BACKEND", "metal")
+    with pytest.raises(ValueError, match="AF3_JAX_BACKEND"):
+        af3_apptainer.build_apptainer_fold_command("/placeholder/manifest.json", 0, False)
