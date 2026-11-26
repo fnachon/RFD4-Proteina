@@ -57,7 +57,9 @@ rfd4-generate inputs=... metrics_tags='[ppi_refolding]'
 
 Notes:
 
-- jax-mps 0.10.9 cannot serialise executables (`Serialize not implemented`), so the persistent compilation
+- Use `jax-mps` 0.10.11 or later in the AF3 environment. With 0.10.9 and 0.10.10, stock AlphaFold 3 silently
+  corrupts the MSA while shuffling it (the fork above also patches that line).
+- jax-mps (checked with 0.10.9 and 0.10.11) does not store compiled executables, so the persistent compilation
   cache does nothing on MPS and every new worker process recompiles each token bucket. Keep one process alive:
   the oracle's warm daemon does this within a run; reuse it across runs with `af3_daemon.py launch`.
 - tokamax autotuning and the GLU/layer-norm XLA pin are CUDA workarounds and are skipped on MPS.
