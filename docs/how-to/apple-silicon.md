@@ -69,7 +69,21 @@ Notes:
 - Folds slower than 2 minutes per design (large complexes) need `AF3_FOLD_TIMEOUT_PER_DESIGN_S`; the daemon's wait is
   at least one hour either way.
 - tokamax autotuning and the GLU/layer-norm XLA pin are CUDA workarounds and are skipped on MPS.
-- OpenFold3 weights need the `sokrypton/alphafold3` fork's OF3 branches; the worker refuses them on this build.
+- OpenFold3 weights need a build whose `featurise_input` accepts `of3_weights`: `kierandidi/alphafold3` (the
+  `alphafold3-open` package). Stock DeepMind and the fork above stop with an error saying so. Point `AF3_MODEL_DIR` at
+  the converted weights and select `metrics/refolding_oracles=of3`; the worker picks the OpenFold3 code paths from the
+  weights' provenance file. On a Mac `scripts/download_assets.sh` skips them (it needs Apptainer), so fetch them directly:
+
+  ```bash
+  hf download nvidia/RFD4-Proteina openfold3/weights/of3_ported_weights.bin.zst \
+      openfold3/weights/of3_ported_weights.provenance.json \
+      --revision 598acab93d5d0aeacc4362f6e88dc20e7db85ef6 --local-dir <dir>
+  export AF3_MODEL_DIR=<dir>/openfold3/weights
+  ```
+
+  Checked on a Mac with `kierandidi`'s build: a 76-residue protein folds (pTM 0.65), and the PD1 binder runs end to end
+  through the `of3` oracle. Its refold differs from the AlphaFold 3 weights' (2.9 Å on that binder), as expected for a
+  different model. Larger inputs, MSAs, ligands and DNA were not run with these weights.
 
 ### Other oracles
 

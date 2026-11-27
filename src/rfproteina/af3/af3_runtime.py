@@ -72,10 +72,14 @@ def make_model_config(
     """
     config = model.Model.Config()
     config.global_config.flash_attention_implementation = flash_attention_implementation
-    # Only on the OF3 path: images predating the fork have no such field.
+    # Only on the OF3 path: builds without OpenFold3 support (stock google-deepmind/alphafold3) have no such field.
     if of3_weights:
         if not hasattr(config.global_config, "of3_weights"):
-            raise ValueError("This alphafold3 build has no OpenFold3 branches (sokrypton fork only).")
+            raise ValueError(
+                "This alphafold3 build has no OpenFold3 branches, so it cannot run converted OpenFold3 weights. "
+                "Use a build whose featurise_input accepts of3_weights, such as kierandidi/alphafold3 "
+                "(the alphafold3-open package)."
+            )
         config.global_config.of3_weights = True
     config.heads.diffusion.eval.num_samples = num_diffusion_samples
     config.num_recycles = num_recycles
